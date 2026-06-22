@@ -8,8 +8,9 @@ __pycache__/
 venv/
 .env
 
-# Data 
-datasets/
+# Data
+datasets/**/images/
+datasets/**/*.csv/
 data/
 *.zip
 *.tar
@@ -31,3 +32,6 @@ mlruns/
 
 # OS
 .DS_Store
+
+# experiments
+experiments/
