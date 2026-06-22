@@ -1,7 +1,16 @@
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.5.0
+    rev: v0.8.0
     hooks:
-      - id: ruff
+      - id: ruff           # линтер
+        args: [--fix]
+      - id: ruff-format    # форматтер
 
-#activation: pre-commit install
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace       # пробелы в конце строк
+      - id: end-of-file-fixer         # перевод строки в конце файла
+      - id: check-yaml                # валидность data.yaml / configs
+      - id: check-added-large-files   # не дать закоммитить тяжёлый файл
+        args: [--maxkb=5000]

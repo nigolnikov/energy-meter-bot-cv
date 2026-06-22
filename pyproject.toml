@@ -1,0 +1,22 @@
+[project]
+name = "electric-energy-bot-ml"
+requires-python = ">=3.10"
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.8.0",
+    "pre-commit>=5.0.0",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+# E,W  - стиль (pycodestyle)      F  - ошибки (pyflakes)
+# I    - сортировка импортов      UP - современный синтаксис
+# B    - типичные баги (bugbear)
+select = ["E", "W", "F", "I", "UP", "B"]
+
+[tool.ruff.format]
+quote-style = "double"
