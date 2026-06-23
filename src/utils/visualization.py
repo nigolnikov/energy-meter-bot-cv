@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 
-from src.utils.contracts import Detection
+from src.utils.contracts import Detection, PipelineResult
 
 COLORS = {
     "meter": (0, 255, 0),  # green
@@ -46,5 +46,36 @@ def draw_detections(image: np.ndarray, detections: list[Detection]) -> np.ndarra
     return result
 
 
-def save_image(image, path):
+def draw_pipeline_result(image: np.ndarray, result: PipelineResult) -> np.ndarray:
+    vis = image.copy()
+
+    boxes = [
+        (result.meter_box, "meter", COLORS["meter"]),
+        (result.screen_box, "screen", COLORS["screen"]),
+        (result.reading_box, "reading", COLORS["reading"]),
+    ]
+
+    for bbox, label, color in boxes:
+        if bbox:  # if box is not empty
+            x1, y1, x2, y2 = bbox
+            cv2.rectangle(vis, (x1, y1), (x2, y2), color, 2)
+            cv2.putText(vis, label, (x1, y1 - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+
+    status_text = f"Value: {result.value} ({result.status})"
+    cv2.putText(
+        vis,
+        status_text,
+        (10, image.shape[0] - 10),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.8,
+        (255, 255, 255),
+        2,
+    )
+
+    return vis
+
+
+# save the visualization
+def save_visualization(image: np.ndarray, path: str) -> None:
     cv2.imwrite(path, image)
+    print(f"Saved: {path}")

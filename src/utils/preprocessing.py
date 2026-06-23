@@ -11,12 +11,18 @@ def apply_clahe(image: np.array) -> np.ndarray:
 
     # 3. CLAHE for only L (brightness)
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-    l2 = clahe.apply(L)
+    l_enhanced = clahe.apply(L)
 
     # 4. merge back
-    lab2 = cv2.merge((l2, a, b))
+    lab_enhanced = cv2.merge((l_enhanced, a, b))
 
     # 5. back to BGR
-    enhanced = cv2.cvtColor(lab2, cv2.COLOR_LAB2BGR)
+    result = cv2.cvtColor(lab_enhanced, cv2.COLOR_LAB2BGR)
 
-    return enhanced
+    return result
+
+
+# Cut region of bbox from image
+def crop_bbox(image: np.ndarray, bbox: list) -> np.ndarray:
+    x1, y1, x2, y2 = bbox
+    return image[y1:y2, x1:x2]
