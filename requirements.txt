@@ -3,7 +3,7 @@ distlib==0.4.3
 filelock==3.29.4
 identify==2.6.19
 nodeenv==1.10.0
-numpy==2.5.0
+numpy==2.2.6
 opencv-python==4.13.0.92
 platformdirs==4.10.0
 pre_commit==4.6.0

@@ -1,4 +1,13 @@
 import cv2
+import numpy as np
+
+from src.utils.contracts import Detection
+
+COLORS = {
+    "meter": (0, 255, 0),  # green
+    "screen": (255, 165, 0),  # orange
+    "reading": (0, 0, 255),  # red
+}
 
 
 def draw_bbox(image, bbox, label, confidence=None):
@@ -15,15 +24,26 @@ def draw_bbox(image, bbox, label, confidence=None):
     return image
 
 
-def draw_detections(image, detections):
+def draw_detections(image: np.ndarray, detections: list[Detection]) -> np.ndarray:
+    result = image.copy()
+
     for det in detections:
-        bbox = det["bbox"]
-        label = det["label"]
-        confidence = det.get("confidence")
+        x1, y1, x2, y2 = det.bbox
+        color = COLORS.get(det.cls, (255, 255, 255))
 
-        image = draw_bbox(image, bbox, label, confidence)
+        cv2.rectangle(result, (x1, y1), (x2, y2), color, thickness=2)
 
-    return image
+        label = f"{det.cls}: {det.confidence:.3f}"
+        cv2.putText(
+            result,
+            label,
+            (x1, y1 - 10),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            fontScale=0.6,
+            color=color,
+            thickness=2,
+        )
+    return result
 
 
 def save_image(image, path):
