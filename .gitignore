@@ -20,6 +20,7 @@ data/
 models/
 *.pt
 *.pth
+runs/
 
 # Logs
 logs/
@@ -35,3 +36,6 @@ mlruns/
 
 # experiments
 experiments/
+
+#reports
+reports/label_validation_report.md
