@@ -4,14 +4,16 @@ __pycache__/
 *.pyo
 *.pyd
 
+src/electric_energy_bot_ml.egg-info/
+
 # Environment
 venv/
 .env
 
 # Data
-datasets/**/images/
-datasets/**/*.csv/
+datasets/
 data/
+runs/
 *.zip
 *.tar
 *.csv
