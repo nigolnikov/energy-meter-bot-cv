@@ -1,4 +1,5 @@
 import argparse
+import os
 from pathlib import Path
 from typing import Any
 
@@ -73,29 +74,25 @@ def main() -> None:
     mlflow_cfg = config["mlflow"]
     train_cfg = config["train"]
 
-    mlflow.set_tracking_uri(mlflow_cfg["tracking_uri"])
-    mlflow.set_experiment(experiment_cfg["name"])
+    os.environ["MLFLOW_TRACKING_URI"] = mlflow_cfg["tracking_uri"]
+    os.environ["MLFLOW_EXPERIMENT_NAME"] = experiment_cfg["name"]
+    os.environ["MLFLOW_RUN"] = experiment_cfg["run_name"]
 
-    with mlflow.start_run(run_name=experiment_cfg["run_name"]):
-        mlflow.log_param("config_path", args.config)
-        mlflow.log_params(train_cfg)
+    model = YOLO(train_cfg["model"])
 
-        model = YOLO(train_cfg["model"])
+    results = model.train(
+        task=train_cfg["task"],
+        data=train_cfg["data"],
+        epochs=train_cfg["epochs"],
+        imgsz=train_cfg["imgsz"],
+        batch=train_cfg["batch"],
+        project=train_cfg["project"],
+        name=train_cfg["name"],
+    )
 
-        results = model.train(
-            task=train_cfg["task"],
-            data=train_cfg["data"],
-            epochs=train_cfg["epochs"],
-            imgsz=train_cfg["imgsz"],
-            batch=train_cfg["batch"],
-            project=train_cfg["project"],
-            name=train_cfg["name"],
-        )
-
-        save_dir = Path(results.save_dir)
-        log_artifacts(save_dir)
-
-        print(f"Training finished. Results saved to: {save_dir}")
+    save_dir = Path(results.save_dir)
+    log_artifacts(save_dir)
+    print(f"Training finished. Results saved to: {save_dir}")
 
 
 if __name__ == "__main__":
