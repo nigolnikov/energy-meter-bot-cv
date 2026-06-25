@@ -21,10 +21,10 @@ class OCRResult:
 
 # Final Result
 class PipelineResult:
-    def __init__(self, meter_box, screen_box, reading_box, raw_text, value, confidence, status):
-        self.meter_box = meter_box
-        self.screen_box = screen_box
-        self.reading_box = reading_box
+    def __init__(self, meter_bbox, screen_bbox, reading_bbox, raw_text, value, confidence, status):
+        self.meter_bbox = meter_bbox
+        self.screen_bbox = screen_bbox
+        self.reading_bbox = reading_bbox
         self.raw_text = raw_text
         self.value = value
         self.confidence = confidence
