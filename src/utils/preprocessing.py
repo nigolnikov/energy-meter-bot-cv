@@ -3,10 +3,76 @@ import os
 import cv2
 import numpy as np
 import torch
+import torch.nn as nn
 
-from src.detection.infer_meter_screen import enhance_net_nopool
-from src.detection.infer_reading_area import ObjectDetector
 from src.utils.logger import logger
+
+
+class enhance_net_nopool(nn.Module):
+    """
+    ЗАГЛУШКА Zero-DCE++ сети — Role C заменит на реальную архитектуру.
+
+    Используется в: src/utils/preprocessing.py → ZeroDCEEnhancer.__init__()
+
+    Контракт forward():
+        Вход:  torch.Tensor shape (1, 3, H, W), float32, значения [0.0 .. 1.0]
+        Выход: list где [0] — torch.Tensor той же формы (1, 3, H, W)
+
+    Сейчас: возвращает вход без изменений (identity).
+    Картинка не улучшается, но ZeroDCEEnhancer не падает с ошибкой.
+    """
+
+    def __init__(self, scale_factor: int = 1):
+        super().__init__()
+        # TODO Role C: здесь будут сверточные слои DCE-Net
+
+    def forward(self, x: torch.Tensor) -> list:
+        # TODO Role C: заменить на реальный проход через сеть
+        return [x]
+
+
+class ObjectDetector:
+    """
+    ЗАГЛУШКА детектора — Role C заменит на реальный YOLO детектор.
+
+    Используется в: src/utils/preprocessing.py → PhotoMan(ObjectDetector)
+    PhotoMan наследуется от этого класса и вызывает get_masked_screen().
+
+    Контракт get_masked_screen():
+        Вход:  нет (берёт self.source установленный в __init__)
+        Выход: dict:
+            {
+                "bool": True,        # True если экран найден
+                "img": np.ndarray    # crop экрана BGR shape (H, W, 3)
+            }
+            или
+            {
+                "bool": False,       # экран не найден
+                "img": None
+            }
+
+    Сейчас: возвращает {"bool": False} — PhotoMan бросит ValueError.
+    Role C заменит на реальный YOLO #1 инференс + crop экрана.
+    """
+
+    def __init__(self, source=None):
+        """
+        source — путь к фото (str) или np.ndarray изображение.
+        Role A будет загружать YOLO модель и запускать инференс по source.
+        """
+        self.sourse = source
+        logger.info(f"[STUB] ObjectDetector initialized, source={source}")
+
+    def get_masked_screen(self) -> dict:
+        """
+        ЗАГЛУШКА. Role A заменит на реальную детекцию + crop экрана.
+
+        Возвращает:
+            "bool" — найден ли экран на фото
+            "img"  — np.ndarray crop экрана в BGR (H, W, 3)
+        """
+        logger.warning("[STUB] get_masked_screen called — returning empty result")
+        return {"bool": False, "img": None}
 
 
 class ZeroDCEEnhancer:

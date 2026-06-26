@@ -2,60 +2,15 @@
 # Владелец: Role A.
 #
 # Этот файл содержит:
-#   1. ObjectDetector — заглушка класса детектора (используется в preprocessing.py)
-#   2. infer()        — заглушка YOLO #2 инференса (используется в pipeline.py)
+#   1. infer()        — заглушка YOLO #2 инференса (используется в pipeline.py)
 #
-# Когда Role A напишет реальный код — заменить тела классов и функций,
+# Когда Role A напишет реальный код — заменить тела функций,
 # интерфейс (входы/выходы) менять НЕ нужно.
 
 import numpy as np
 
 from src.utils.contracts import Detection
 from src.utils.logger import logger
-
-
-class ObjectDetector:
-    """
-    ЗАГЛУШКА детектора — Role A заменит на реальный YOLO детектор.
-
-    Используется в: src/utils/preprocessing.py → PhotoMan(ObjectDetector)
-    PhotoMan наследуется от этого класса и вызывает get_masked_screen().
-
-    Контракт get_masked_screen():
-        Вход:  нет (берёт self.source установленный в __init__)
-        Выход: dict:
-            {
-                "bool": True,        # True если экран найден
-                "img": np.ndarray    # crop экрана BGR shape (H, W, 3)
-            }
-            или
-            {
-                "bool": False,       # экран не найден
-                "img": None
-            }
-
-    Сейчас: возвращает {"bool": False} — PhotoMan бросит ValueError.
-    Role A заменит на реальный YOLO #1 инференс + crop экрана.
-    """
-
-    def __init__(self, source=None):
-        """
-        source — путь к фото (str) или np.ndarray изображение.
-        Role A будет загружать YOLO модель и запускать инференс по source.
-        """
-        self.sourse = source
-        logger.info(f"[STUB] ObjectDetector initialized, source={source}")
-
-    def get_masked_screen(self) -> dict:
-        """
-        ЗАГЛУШКА. Role A заменит на реальную детекцию + crop экрана.
-
-        Возвращает:
-            "bool" — найден ли экран на фото
-            "img"  — np.ndarray crop экрана в BGR (H, W, 3)
-        """
-        logger.warning("[STUB] get_masked_screen called — returning empty result")
-        return {"bool": False, "img": None}
 
 
 def infer(image: np.ndarray) -> list:
