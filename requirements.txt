@@ -1,0 +1,16 @@
+cfgv==3.5.0
+distlib==0.4.3
+filelock==3.29.4
+identify==2.6.19
+nodeenv==1.10.0
+numpy==2.2.6
+opencv-python==4.13.0.92
+platformdirs==4.10.0
+pre_commit==4.6.0
+python-discovery==1.4.2
+PyYAML==6.0.3
+ruff==0.15.17
+virtualenv==21.5.1
+ultralytics>=8.3.0
+mlflow>=2.0.0
+python-dotenv>=1.0.0

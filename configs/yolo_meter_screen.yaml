@@ -1,0 +1,18 @@
+experiment:
+  name: yolo-obb-meter-screen
+  run_name: yolo11s-obb-img640-epochs50
+
+mlflow:
+  tracking_uri: ${MLFLOW_TRACKING_URI}
+
+train:
+  task: obb
+  model: yolo11s-obb.pt
+  data: datasets/yolo_meter_screen/data.yaml
+
+  epochs: 50
+  imgsz: 640
+  batch: 16
+
+  project: runs/yolo_obb
+  name: meter_screen_yolo11s_obb

@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+src/electric_energy_bot_ml.egg-info/
+
+# Environment
+venv/
+.env
+
+# Data
+datasets/
+data/
+runs/
+*.zip
+*.tar
+*.csv
+
+# Models
+models/
+*.pt
+*.pth
+runs/
+
+# Logs
+logs/
+wandb/
+mlruns/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+
+# experiments
+experiments/
+
+#reports
+reports/label_validation_report.md
