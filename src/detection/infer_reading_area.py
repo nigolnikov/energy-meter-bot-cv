@@ -8,9 +8,19 @@
 # интерфейс (входы/выходы) менять НЕ нужно.
 
 import numpy as np
+from ultralytics import YOLO
 
 from src.utils.contracts import Detection
 from src.utils.logger import logger
+
+CLASS_NAMES = {
+    0: "reading",
+}
+
+# CHANGE THIS LATER: Role A должен будет указать путь к своей модели.
+MODEL_PATH = "runs/obb/runs/yolo_obb/meter_screen_yolo11s_obb-11/weights/best.pt"
+
+model = YOLO(MODEL_PATH)
 
 
 def infer(image: np.ndarray) -> list:
@@ -32,9 +42,31 @@ def infer(image: np.ndarray) -> list:
     """
     logger.info(f"[STUB] yolo2 infer called, image shape: {image.shape}")
 
-    h, w = image.shape[:2]
+    results = model.predict(
+        source=image,
+        conf=0.25,
+        verbose=False,
+    )
 
-    # Фейковый bbox — весь переданный crop
-    return [
-        Detection(bbox=[0, 0, w, h], cls="reading", confidence=0.85),
-    ]
+    detections = []
+
+    for result in results:
+        if result.obb is None:
+            continue
+
+        boxes = result.obb.xyxyxyxy.cpu().numpy()
+        classes = result.obb.cls.cpu().numpy()
+        confidences = result.obb.conf.cpu().numpy()
+
+        for bbox, cls_id, score in zip(boxes, classes, confidences, strict=False):
+            detections.append(
+                Detection(
+                    bbox=bbox.reshape(-1).tolist(),
+                    cls=CLASS_NAMES[int(cls_id)],
+                    confidence=float(score),
+                )
+            )
+
+    logger.info(f"[STUB] yolo2 infer finished, found {len(detections)} detections")
+
+    return detections

@@ -1,5 +1,5 @@
 experiment:
-  name: yolo-obb-meter-screen
+  name: yolo-obb-meter-screen-v3-check
   run_name: yolo11s-obb-img640-epochs50
 
 mlflow:

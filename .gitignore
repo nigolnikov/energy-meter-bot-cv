@@ -12,6 +12,7 @@ venv/
 
 # Data
 datasets/
+datasets_dis/
 data/
 runs/
 *.zip
