@@ -17,7 +17,7 @@ CLASS_NAMES = {
     2: "analog_register",
 }
 
-MODEL_PATH = "runs/obb/runs/yolo_obb/meter_screen_yolo11s_obb-11/weights/best.pt"
+MODEL_PATH = "runs/obb/runs/yolo_obb/meter_screen_yolo11s_obb-21/weights/best.pt"
 
 model = YOLO(MODEL_PATH)
 

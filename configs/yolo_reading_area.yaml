@@ -1,0 +1,18 @@
+experiment:
+  name: yolo-obb-reading-area-v3-check
+  run_name: yolo11s-obb-img640-epochs50
+
+mlflow:
+  tracking_uri: ${MLFLOW_TRACKING_URI}
+
+train:
+  task: obb
+  model: yolo11s-obb.pt
+  data: datasets/yolo_reading_area/data.yaml
+
+  epochs: 50
+  imgsz: 640
+  batch: 16
+
+  project: runs/yolo_obb
+  name: reading_area_yolo11s_obb
