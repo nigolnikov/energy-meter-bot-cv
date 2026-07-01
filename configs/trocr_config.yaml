@@ -1,0 +1,22 @@
+experiment:
+  name: trocr
+  run_name: trocr-small-stage1-epoch10-batchsize4-lrate-5e-5
+
+mlflow:
+  tracking_uri: ${MLFLOW_TRACKING_URI}
+
+model:
+  name: microsoft/trocr-small-stage1
+
+data:
+  train_images: datasets/ocr_analog_meter/images/train
+  train_labels: datasets/ocr_analog_meter/labels/train.csv
+
+  val_images: datasets/ocr_analog_meter/images/val
+  val_labels: datasets/ocr_analog_meter/labels/val.csv
+
+  image_column: filename
+  text_column: text
+
+train:
+  output_dir: models/trocr-meter-finetuned
