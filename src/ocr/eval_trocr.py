@@ -6,10 +6,31 @@ from pathlib import Path
 
 import jiwer
 import pandas as pd
+import torch
 from PIL import Image
+from transformers import TrOCRProcessor, VisionEncoderDecoderModel
 
-from src.ocr.infer_trocr import infer, load_model
+from src.ocr.infer_trocr import infer
 from src.utils.logger import logger
+
+MODEL_PATH = "models/trocr-meter-finetuned"
+
+
+def load_model(
+    model_name_or_path: str = MODEL_PATH,
+) -> tuple[TrOCRProcessor, VisionEncoderDecoderModel, torch.device]:
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    processor = TrOCRProcessor.from_pretrained(model_name_or_path)
+    model = VisionEncoderDecoderModel.from_pretrained(model_name_or_path)
+
+    model.to(device)
+    model.eval()
+
+    logger.info(f"Using device: {device}")
+    logger.info(f"Loaded TrOCR model from: {model_name_or_path}")
+
+    return processor, model, device
 
 
 def character_error_rate(true_text: str, predicted_text: str) -> float:
