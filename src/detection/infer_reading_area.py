@@ -14,11 +14,11 @@ from src.utils.contracts import Detection
 from src.utils.logger import logger
 
 CLASS_NAMES = {
-    0: "reading",
+    0: "reading_area",
 }
 
 # CHANGE THIS LATER: Role A должен будет указать путь к своей модели.
-MODEL_PATH = "runs/obb/runs/yolo_obb/reading_area_yolo11s_obb/weights/best.pt"
+MODEL_PATH = "runs/detect/runs/yolo/reading_area_yolo11s/weights/best.pt"
 
 model = YOLO(MODEL_PATH)
 
@@ -40,7 +40,7 @@ def infer(image: np.ndarray) -> list:
 
     Сейчас: возвращает один фейковый Detection на весь crop.
     """
-    logger.info(f"[STUB] yolo2 infer called, image shape: {image.shape}")
+    logger.info(f"YOLO #2 infer called, image shape: {image.shape}")
 
     results = model.predict(
         source=image,
@@ -51,12 +51,12 @@ def infer(image: np.ndarray) -> list:
     detections = []
 
     for result in results:
-        if result.obb is None:
+        if result.boxes is None:
             continue
 
-        boxes = result.obb.xyxyxyxy.cpu().numpy()
-        classes = result.obb.cls.cpu().numpy()
-        confidences = result.obb.conf.cpu().numpy()
+        boxes = result.boxes.xyxy.cpu().numpy()
+        classes = result.boxes.cls.cpu().numpy()
+        confidences = result.boxes.conf.cpu().numpy()
 
         for bbox, cls_id, score in zip(boxes, classes, confidences, strict=False):
             detections.append(
@@ -67,6 +67,6 @@ def infer(image: np.ndarray) -> list:
                 )
             )
 
-    logger.info(f"[STUB] yolo2 infer finished, found {len(detections)} detections")
+    logger.info(f"YOLO #2 infer finished, found {len(detections)} detection(s)")
 
     return detections

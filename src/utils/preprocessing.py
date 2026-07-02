@@ -5,6 +5,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 
+from src.detection.infer_meter_screen import infer as yolo1_infer
 from src.utils.logger import logger
 
 
@@ -19,7 +20,7 @@ class enhance_net_nopool(nn.Module):
         Выход: list где [0] — torch.Tensor той же формы (1, 3, H, W)
 
     Сейчас: возвращает вход без изменений (identity).
-    Картинка не улучшается, но ZeroDCEEnhancer не падает с ошибкой.
+    Картинка не улучшается, но ZeroDCEEnhancer не падает c ошибкой.
     """
 
     def __init__(self, scale_factor: int = 1):
@@ -32,47 +33,32 @@ class enhance_net_nopool(nn.Module):
 
 
 class ObjectDetector:
-    """
-    ЗАГЛУШКА детектора — Role C заменит на реальный YOLO детектор.
-
-    Используется в: src/utils/preprocessing.py → PhotoMan(ObjectDetector)
-    PhotoMan наследуется от этого класса и вызывает get_masked_screen().
-
-    Контракт get_masked_screen():
-        Вход:  нет (берёт self.source установленный в __init__)
-        Выход: dict:
-            {
-                "bool": True,        # True если экран найден
-                "img": np.ndarray    # crop экрана BGR shape (H, W, 3)
-            }
-            или
-            {
-                "bool": False,       # экран не найден
-                "img": None
-            }
-
-    Сейчас: возвращает {"bool": False} — PhotoMan бросит ValueError.
-    Role C заменит на реальный YOLO #1 инференс + crop экрана.
-    """
-
     def __init__(self, source=None):
-        """
-        source — путь к фото (str) или np.ndarray изображение.
-        Role A будет загружать YOLO модель и запускать инференс по source.
-        """
-        self.sourse = source
-        logger.info(f"[STUB] ObjectDetector initialized, source={source}")
+        self.source = source
+        logger.info(f"ObjectDetector initialized, source={source}")
 
     def get_masked_screen(self) -> dict:
-        """
-        ЗАГЛУШКА. Role A заменит на реальную детекцию + crop экрана.
+        if isinstance(self.source, str):
+            image = cv2.imread(self.source)
+            if image is None:
+                logger.error(f"Cannot open image: {self.source}")
+                return {"bool": False, "img": None}
+        else:
+            image = self.source
 
-        Возвращает:
-            "bool" — найден ли экран на фото
-            "img"  — np.ndarray crop экрана в BGR (H, W, 3)
-        """
-        logger.warning("[STUB] get_masked_screen called — returning empty result")
-        return {"bool": False, "img": None}
+        # Запускаем YOLO #1
+        detections = yolo1_infer(image)
+
+        # Ищем digital display среди детекций
+        screen_det = next((d for d in detections if d.cls == "digital_display"), None)
+
+        if screen_det is None:
+            logger.warning("digital_display not found")
+            return {"bool": False, "img": None}
+
+        crop = crop_obb(image, screen_det.bbox)
+        logger.info(f"Screen crop: {crop.shape[1]}x{crop.shape[0]}")
+        return {"bool": True, "img": crop}
 
 
 class ZeroDCEEnhancer:
@@ -217,7 +203,7 @@ def preprocess_for_ocr(image_bgr: np.ndarray) -> np.ndarray:
     enhanced = apply_clahe(image_bgr)
     denoised = denoise(enhanced)
     sharpened = sharpen(denoised)
-    logger.info("preprocess_for_ocr complete")
+    logger.info("Preprocess for OCR complete!")
     return sharpened
 
 
@@ -234,7 +220,7 @@ def crop_bbox(image: np.ndarray, bbox: list) -> np.ndarray:
     Выход: np.ndarray (h, w, 3) — вырезанная область
     """
     x1, y1, x2, y2 = bbox
-    crop = image[y1:y2, x1:x2]
+    crop = image[int(y1) : int(y2), int(x1) : int(x2)]
     logger.info(f"Cropped: {crop.shape[1]}x{crop.shape[0]}")
     return crop
 
@@ -253,3 +239,13 @@ def crop_obb(image: np.ndarray, bbox: list) -> np.ndarray:
     crop = image[y1:y2, x1:x2]
     logger.info(f"OBB crop: {crop.shape[1]}x{crop.shape[0]}")
     return crop
+
+
+def obb_to_bbox(bbox: list) -> list:
+    xs = bbox[0::2]
+    ys = bbox[1::2]
+    return [int(min(xs)), int(min(ys)), int(max(xs)), int(max(ys))]
+
+
+def validate_reading(text: str) -> bool:
+    return 4 <= len(text) <= 8 and text != ""
