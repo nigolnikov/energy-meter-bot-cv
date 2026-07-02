@@ -4,10 +4,18 @@ import cv2
 
 from src.detection.infer_meter_screen import infer as yolo1_infer
 from src.detection.infer_reading_area import infer as yolo2_infer
-from src.ocr.infer_trocr import infer as ocr_infer
+from src.ocr.infer_trocr import ocr_infer
 from src.utils.contracts import PipelineResult
 from src.utils.logger import logger
-from src.utils.preprocessing import apply_clahe, crop_bbox, crop_obb, preprocess_for_ocr
+from src.utils.preprocessing import (
+    apply_clahe,
+    crop_bbox,
+    crop_obb,
+    obb_to_bbox,
+    preprocess_for_ocr,
+    validate_reading,
+)
+from src.utils.visualization import draw_pipeline_result, save_visualization
 
 
 def run_pipeline(image_path: str) -> PipelineResult:
@@ -27,20 +35,25 @@ def run_pipeline(image_path: str) -> PipelineResult:
     detection_1 = yolo1_infer(image)  # List[Detection]
     logger.info(f"YOLO #1 found: {[d.cls for d in detection_1]}")
 
-    screen_det = next((d for d in detection_1 if d.cls == "digital_display"), None)
     meter_det = next((d for d in detection_1 if d.cls == "meter"), None)
+    digital_det = next((d for d in detection_1 if d.cls == "digital_display"), None)
+    analog_det = next((d for d in detection_1 if d.cls == "analog_register"), None)
+
+    screen_det = digital_det or analog_det
 
     if not screen_det:
-        logger.warning("Screen not found - returning no_meter")
+        logger.warning("Screen not found (neither digital_display nor analog_register)")
         return PipelineResult(
-            meter_box=[],
-            screen_box=[],
-            reading_box=[],
+            meter_bbox=[],
+            screen_bbox=[],
+            screen_type="",
+            reading_bbox=[],
             raw_text="",
             value="",
             confidence=0.0,
-            status="no_meter",
+            status="no_screen",
         )
+    logger.info(f"Using screen type: '{screen_det.cls}'")
 
     # 3. Crop + Enhancement
     screen_crop = crop_obb(image, screen_det.bbox)
@@ -54,13 +67,14 @@ def run_pipeline(image_path: str) -> PipelineResult:
     detection_2 = yolo2_infer(screen_enhanced)
     logger.info(f"YOLO #2 found: {[d.cls for d in detection_2]}")
 
-    reading_det = next((d for d in detection_2 if d.cls == "reading"), None)
+    reading_det = next((d for d in detection_2 if d.cls == "reading_area"), None)
 
     if not reading_det:
         logger.warning("Reading area not found — returning no_reading")
         return PipelineResult(
             meter_bbox=meter_det.bbox if meter_det else [],
-            screen_bbox=screen_det.bbox,
+            screen_bbox=obb_to_bbox(screen_det.bbox),
+            screen_type=screen_det.cls,
             reading_bbox=[],
             raw_text="",
             value="",
@@ -80,21 +94,43 @@ def run_pipeline(image_path: str) -> PipelineResult:
     # 8. Post-processing
     clean_value = ocr_result.text.replace(" ", "").strip()
 
+    screen_bbox = obb_to_bbox(screen_det.bbox)
     final_confidence = min(screen_det.confidence, reading_det.confidence, ocr_result.confidence)
+
+    if not validate_reading(clean_value):
+        return PipelineResult(
+            meter_bbox=obb_to_bbox(meter_det.bbox) if meter_det else [],
+            screen_bbox=screen_bbox,
+            screen_type=screen_det.cls,
+            reading_bbox=reading_det.bbox,
+            raw_text=ocr_result.text,
+            value=clean_value,
+            confidence=round(final_confidence, 3),
+            status="invalid_reading",
+        )
 
     status = "ok" if final_confidence >= 0.5 else "low_confidence"
 
     logger.info(f"Pipeline done: value='{clean_value}', status='{status}'")
 
-    return PipelineResult(
-        meter_bbox=meter_det.bbox if meter_det else [],
-        screen_bbox=screen_det.bbox,
+    # 9. Visualization - сохраняем фото с bbox
+
+    screen_bbox = obb_to_bbox(screen_det.bbox)
+
+    pipeline_result = PipelineResult(
+        meter_bbox=obb_to_bbox(meter_det.bbox) if meter_det else [],
+        screen_bbox=screen_bbox,
+        screen_type=screen_det.cls,
         reading_bbox=reading_det.bbox,
         raw_text=ocr_result.text,
         value=clean_value,
         confidence=round(final_confidence, 3),
         status=status,
     )
+    vis = draw_pipeline_result(image, pipeline_result)
+    save_visualization(vis, "output.jpg")
+
+    return pipeline_result
 
 
 if __name__ == "__main__":

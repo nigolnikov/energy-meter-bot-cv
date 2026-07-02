@@ -14,7 +14,7 @@ virtualenv==21.5.1
 ultralytics>=8.3.0
 mlflow>=2.0.0
 python-dotenv>=1.0.0
-transformers==4.45.2
+transformers==5.12.1
 torch==2.5.1
 accelerate==0.34.2
 Pillow==10.4.0

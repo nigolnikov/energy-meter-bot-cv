@@ -48,7 +48,7 @@ Detection schema
 ```
 {
   "bbox": [x1, y1, x2, y2],
-  "class": "reading",
+  "class": "reading_area",
   "confidence": float
 }
 ```
