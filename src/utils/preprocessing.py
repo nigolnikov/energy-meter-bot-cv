@@ -248,4 +248,4 @@ def obb_to_bbox(bbox: list) -> list:
 
 
 def validate_reading(text: str) -> bool:
-    return 4 <= len(text) <= 8 and text != ""
+    return text.isdigit() and 4 <= len(text) <= 8 and text != ""
