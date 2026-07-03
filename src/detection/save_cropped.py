@@ -2,7 +2,7 @@ from pathlib import Path
 
 import cv2
 
-from obb_crop_robust import crop_and_warp_obb
+from src.detection.obb_crop_robust import crop_and_warp_obb
 
 # PATHS
 dir_img = Path("datasets/yolo_meter_screen/images")

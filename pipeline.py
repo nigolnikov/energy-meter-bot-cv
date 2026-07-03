@@ -13,6 +13,7 @@ from src.utils.preprocessing import (
     crop_obb,
     obb_to_bbox,
     preprocess_for_ocr,
+    reading_to_original,
     validate_reading,
 )
 from src.utils.visualization import draw_pipeline_result, save_visualization
@@ -41,7 +42,20 @@ def run_pipeline(image_path: str) -> PipelineResult:
 
     screen_det = digital_det or analog_det
 
-    if not screen_det:
+    if meter_det is None:
+        logger.warning("Meter not found")
+        return PipelineResult(
+            meter_bbox=[],
+            screen_bbox=[],
+            screen_type="",
+            reading_bbox=[],
+            raw_text="",
+            value="",
+            confidence=0.0,
+            status="no_meter",
+        )
+
+    if screen_det is None:
         logger.warning("Screen not found (neither digital_display nor analog_register)")
         return PipelineResult(
             meter_bbox=[],
@@ -72,7 +86,7 @@ def run_pipeline(image_path: str) -> PipelineResult:
     if not reading_det:
         logger.warning("Reading area not found — returning no_reading")
         return PipelineResult(
-            meter_bbox=meter_det.bbox if meter_det else [],
+            meter_bbox=obb_to_bbox(meter_det.bbox) if meter_det else [],
             screen_bbox=obb_to_bbox(screen_det.bbox),
             screen_type=screen_det.cls,
             reading_bbox=[],
@@ -82,9 +96,14 @@ def run_pipeline(image_path: str) -> PipelineResult:
             status="no_reading",
         )
 
+    screen_bbox = obb_to_bbox(screen_det.bbox)
+    reading_abs = reading_to_original(reading_det.bbox, screen_bbox)
+
     # 6. Crop показания + preprocessing
     reading_crop = crop_bbox(screen_enhanced, reading_det.bbox)
+
     reading_ready = preprocess_for_ocr(reading_crop)
+    reading_ready = cv2.cvtColor(reading_ready, cv2.COLOR_BGR2GRAY)
 
     # 7. TrOCR
     logger.info("Running TrOCR...")
@@ -93,8 +112,6 @@ def run_pipeline(image_path: str) -> PipelineResult:
 
     # 8. Post-processing
     clean_value = ocr_result.text.replace(" ", "").strip()
-
-    screen_bbox = obb_to_bbox(screen_det.bbox)
     final_confidence = min(screen_det.confidence, reading_det.confidence, ocr_result.confidence)
 
     if not validate_reading(clean_value):
@@ -102,7 +119,7 @@ def run_pipeline(image_path: str) -> PipelineResult:
             meter_bbox=obb_to_bbox(meter_det.bbox) if meter_det else [],
             screen_bbox=screen_bbox,
             screen_type=screen_det.cls,
-            reading_bbox=reading_det.bbox,
+            reading_bbox=reading_abs,
             raw_text=ocr_result.text,
             value=clean_value,
             confidence=round(final_confidence, 3),
@@ -115,13 +132,11 @@ def run_pipeline(image_path: str) -> PipelineResult:
 
     # 9. Visualization - сохраняем фото с bbox
 
-    screen_bbox = obb_to_bbox(screen_det.bbox)
-
     pipeline_result = PipelineResult(
         meter_bbox=obb_to_bbox(meter_det.bbox) if meter_det else [],
         screen_bbox=screen_bbox,
         screen_type=screen_det.cls,
-        reading_bbox=reading_det.bbox,
+        reading_bbox=reading_abs,
         raw_text=ocr_result.text,
         value=clean_value,
         confidence=round(final_confidence, 3),

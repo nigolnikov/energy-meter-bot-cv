@@ -241,6 +241,13 @@ def crop_obb(image: np.ndarray, bbox: list) -> np.ndarray:
     return crop
 
 
+# Смотрим отдельно на вырезанный crop
+def reading_to_original(reading_bbox: list, screen_bbox: list) -> list:
+    off_x, off_y = screen_bbox[0], screen_bbox[1]
+    rx1, ry1, rx2, ry2 = reading_bbox
+    return [int(rx1 + off_x), int(ry1 + off_y), int(rx2 + off_x), int(ry2 + off_y)]
+
+
 def obb_to_bbox(bbox: list) -> list:
     xs = bbox[0::2]
     ys = bbox[1::2]
@@ -248,4 +255,15 @@ def obb_to_bbox(bbox: list) -> list:
 
 
 def validate_reading(text: str) -> bool:
-    return text.isdigit() and 4 <= len(text) <= 8 and text != ""
+    text = text.strip()
+
+    if not (4 <= len(text) <= 10):
+        return False
+
+    if text.count(".") > 1:
+        return False
+
+    if text.startswith(".") or text.endswith("."):
+        return False
+
+    return all(ch.isdigit() or ch == "." for ch in text)
