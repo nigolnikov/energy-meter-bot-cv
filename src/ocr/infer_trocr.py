@@ -17,6 +17,7 @@ def infer(
     model: VisionEncoderDecoderModel,
     device: torch.device,
     max_new_tokens: int = 14,
+    num_beams: int = 4,
 ) -> OCRResult:
     image = image.convert("RGB")
 
@@ -26,19 +27,66 @@ def infer(
     ).pixel_values.to(device)
 
     with torch.no_grad():
-        generated_ids = model.generate(
+        output = model.generate(
             pixel_values,
             max_new_tokens=max_new_tokens,
+            num_beams=num_beams,
+            early_stopping=True,
+            output_scores=True,
+            return_dict_in_generate=True,
         )
 
-    text = processor.batch_decode(
-        generated_ids,
+    predicted_text = processor.batch_decode(
+        output.sequences,
         skip_special_tokens=True,
+    )[0].strip()
+
+    transition_scores_kwargs = {
+        "normalize_logits": True,
+    }
+
+    if num_beams > 1:
+        transition_scores_kwargs["beam_indices"] = output.beam_indices
+
+    transition_scores = model.compute_transition_scores(
+        output.sequences,
+        output.scores,
+        **transition_scores_kwargs,
     )[0]
 
+    generated_token_ids = output.sequences[0, 1:]
+
+    eos_token_id = model.generation_config.eos_token_id
+    if isinstance(eos_token_id, list | tuple):
+        eos_token_id = eos_token_id[0]
+
+    eos_positions = (generated_token_ids == eos_token_id).nonzero()
+
+    if len(eos_positions) > 0:
+        valid_length = int(eos_positions[0]) + 1
+    else:
+        valid_length = generated_token_ids.shape[0]
+
+    valid_log_probs = transition_scores[:valid_length]
+    valid_probs = valid_log_probs.exp()
+
+    if valid_length == 0:
+        confidence = 0.0
+    else:
+        # Geometric mean of generated token probabilities.
+        confidence = float(valid_log_probs.mean().exp())
+
+    min_confidence = float(valid_probs.min()) if valid_length > 0 else 0.0
+
+    logger.info(
+        f"TrOCR prediction: {predicted_text!r}, "
+        f"confidence={confidence:.4f}, "
+        f"min_confidence={min_confidence:.4f}"
+    )
+
     return OCRResult(
-        text=text.strip(),
-        confidence=0.88,  # placeholder for now
+        text=predicted_text,
+        confidence=confidence,
     )
 
 
@@ -53,21 +101,24 @@ def ocr_infer(image: np.ndarray) -> OCRResult:
     Output:
         OCRResult:
             text: raw model prediction
-            confidence: 0.0 placeholder, because confidence is not used
+            confidence: geometric mean of generated token probabilities
     """
+
+    if image is None:
+        raise ValueError("ocr_infer received image=None")
 
     logger.info(f"TrOCR infer called, image shape: {image.shape}")
 
-    MODEL_PATH = "models/trocr-meter-finetuned"
+    model_path = "models/trocr-meter-finetuned"
 
     if not hasattr(ocr_infer, "processor"):
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        logger.info(f"Loading TrOCR model from: {MODEL_PATH}")
+        logger.info(f"Loading TrOCR model from: {model_path}")
         logger.info(f"Using device: {device}")
 
-        ocr_infer.processor = TrOCRProcessor.from_pretrained(MODEL_PATH)
-        ocr_infer.model = VisionEncoderDecoderModel.from_pretrained(MODEL_PATH)
+        ocr_infer.processor = TrOCRProcessor.from_pretrained(model_path)
+        ocr_infer.model = VisionEncoderDecoderModel.from_pretrained(model_path)
 
         ocr_infer.model.to(device)
         ocr_infer.model.eval()
@@ -77,9 +128,6 @@ def ocr_infer(image: np.ndarray) -> OCRResult:
     processor = ocr_infer.processor
     model = ocr_infer.model
     device = ocr_infer.device
-
-    if image is None:
-        raise ValueError("ocr_infer received image=None")
 
     if image.dtype != np.uint8:
         image = image.astype(np.uint8)
@@ -93,21 +141,11 @@ def ocr_infer(image: np.ndarray) -> OCRResult:
     else:
         raise ValueError(f"Unsupported image shape for OCR: {image.shape}")
 
-    pixel_values = processor(images=pil_image, return_tensors="pt").pixel_values.to(device)
-
-    with torch.no_grad():
-        generated_ids = model.generate(
-            pixel_values,
-            max_length=10,
-            num_beams=4,
-            early_stopping=True,
-        )
-
-    predicted_text = processor.batch_decode(generated_ids, skip_special_tokens=True)[0]
-
-    logger.info(f"TrOCR prediction: {predicted_text!r}")
-
-    return OCRResult(
-        text=predicted_text,
-        confidence=0.88,
+    return infer(
+        image=pil_image,
+        processor=processor,
+        model=model,
+        device=device,
+        max_new_tokens=9,
+        num_beams=4,
     )
