@@ -1,5 +1,6 @@
 import argparse
 import os
+import random
 from pathlib import Path
 from typing import Any
 
@@ -8,6 +9,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 
+import albumentations as A
 import matplotlib.pyplot as plt
 import mlflow
 import numpy as np
@@ -22,8 +24,10 @@ from transformers import (
     TrOCRProcessor,
     VisionEncoderDecoderModel,
     default_data_collator,
+    set_seed,
 )
 
+from src.ocr.augmentations import build_train_augmentations
 from src.utils.config import load_yaml_config
 
 DEFAULT_EPOCHS = 10
@@ -31,6 +35,7 @@ DEFAULT_BATCH_SIZE = 4
 DEFAULT_LEARNING_RATE = 2e-5
 DEFAULT_MAX_TARGET_LENGTH = 10
 DEFAULT_WEIGHT_DECAY = 0.01
+DEFAULT_SEED = 42
 
 
 class MeterOCRDataset(Dataset):
@@ -42,12 +47,14 @@ class MeterOCRDataset(Dataset):
         image_column: str = "filename",
         text_column: str = "text",
         max_target_length: int = 16,
+        augmentations: A.Compose | None = None,
     ):
         self.images_dir = Path(images_dir)
         self.processor = processor
         self.image_column = image_column
         self.text_column = text_column
         self.max_target_length = max_target_length
+        self.augmentations = augmentations
 
         self.df = pd.read_csv(labels_csv, dtype={text_column: str})
 
@@ -74,6 +81,11 @@ class MeterOCRDataset(Dataset):
             raise FileNotFoundError(f"Image not found: {image_path}")
 
         image = Image.open(image_path).convert("RGB")
+
+        if self.augmentations is not None:
+            image_np = np.array(image)
+            image_np = self.augmentations(image=image_np)["image"]
+            image = Image.fromarray(image_np)
 
         pixel_values = self.processor(
             images=image,
@@ -113,6 +125,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model-name", type=str, default=None)
     parser.add_argument("--run-name", type=str, default=None)
     parser.add_argument("--max-target-length", type=int, default=None)
+    parser.add_argument("--seed", type=int, default=None)
 
     return parser.parse_args()
 
@@ -139,6 +152,9 @@ def apply_overrides(config: dict[str, Any], args: argparse.Namespace) -> dict[st
     if args.run_name is not None:
         config["experiment"]["run_name"] = args.run_name
 
+    if args.seed is not None:
+        config["train"]["seed"] = args.seed
+
     return config
 
 
@@ -150,8 +166,22 @@ def apply_default_train_values(config: dict[str, Any]) -> dict[str, Any]:
     train_cfg.setdefault("learning_rate", DEFAULT_LEARNING_RATE)
     train_cfg.setdefault("max_target_length", DEFAULT_MAX_TARGET_LENGTH)
     train_cfg.setdefault("weight_decay", DEFAULT_WEIGHT_DECAY)
+    train_cfg.setdefault("seed", DEFAULT_SEED)
 
     return config
+
+
+def seed_everything(seed: int) -> None:
+    random.seed(seed)
+    np.random.seed(seed)
+
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+
+    set_seed(seed)
+
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
 
 def load_model_and_processor(model_name: str, max_target_length: int):
@@ -302,6 +332,7 @@ def log_params(config: dict[str, Any]) -> None:
             "weight_decay": train_cfg["weight_decay"],
             "max_target_length": train_cfg["max_target_length"],
             "fp16": torch.cuda.is_available(),
+            "seed": train_cfg["seed"],
         }
     )
 
@@ -363,6 +394,36 @@ def log_loss_plot(trainer: Seq2SeqTrainer, output_dir: Path) -> None:
     mlflow.log_artifact(str(plot_path), artifact_path="plots")
 
 
+def log_cer_plot(trainer: Seq2SeqTrainer, output_dir: Path) -> None:
+    eval_epochs = []
+    eval_cer_values = []
+
+    for log in trainer.state.log_history:
+        if "eval_mean_cer" in log and "epoch" in log:
+            eval_epochs.append(log["epoch"])
+            eval_cer_values.append(log["eval_mean_cer"])
+
+    if not eval_cer_values:
+        return
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    plt.figure(figsize=(8, 5))
+    plt.plot(eval_epochs, eval_cer_values, marker="o", label="Validation CER")
+
+    plt.xlabel("Epoch")
+    plt.ylabel("CER")
+    plt.title("Validation CER by epoch")
+    plt.legend()
+    plt.grid(True)
+
+    plot_path = output_dir / "cer_curve.png"
+    plt.savefig(plot_path, bbox_inches="tight")
+    plt.close()
+
+    mlflow.log_artifact(str(plot_path), artifact_path="plots")
+
+
 def log_model_artifacts(output_dir: Path) -> None:
     artifacts = [
         output_dir / "config.json",
@@ -403,6 +464,8 @@ def main() -> None:
     data_cfg = config["data"]
     train_cfg = config["train"]
 
+    seed_everything(train_cfg["seed"])
+
     os.environ["MLFLOW_TRACKING_URI"] = mlflow_cfg["tracking_uri"]
     os.environ["MLFLOW_EXPERIMENT_NAME"] = experiment_cfg["name"]
 
@@ -418,6 +481,8 @@ def main() -> None:
             max_target_length=train_cfg["max_target_length"],
         )
 
+        train_augmentations = build_train_augmentations()
+
         train_dataset = MeterOCRDataset(
             images_dir=data_cfg["train_images"],
             labels_csv=data_cfg["train_labels"],
@@ -425,6 +490,7 @@ def main() -> None:
             image_column=data_cfg["image_column"],
             text_column=data_cfg["text_column"],
             max_target_length=train_cfg["max_target_length"],
+            augmentations=train_augmentations,
         )
 
         val_dataset = MeterOCRDataset(
@@ -434,6 +500,7 @@ def main() -> None:
             image_column=data_cfg["image_column"],
             text_column=data_cfg["text_column"],
             max_target_length=train_cfg["max_target_length"],
+            augmentations=None,
         )
 
         training_args = Seq2SeqTrainingArguments(
@@ -443,6 +510,8 @@ def main() -> None:
             per_device_eval_batch_size=train_cfg["batch_size"],
             learning_rate=train_cfg["learning_rate"],
             weight_decay=train_cfg["weight_decay"],
+            seed=train_cfg["seed"],
+            data_seed=train_cfg["seed"],
             predict_with_generate=True,
             eval_strategy="epoch",
             save_strategy="epoch",
@@ -484,6 +553,7 @@ def main() -> None:
         log_trainer_history_to_mlflow(trainer)
         log_loss_plot(trainer, output_dir)
         log_model_artifacts(output_dir)
+        log_cer_plot(trainer, output_dir)
 
         print(f"Training finished. Model saved to: {output_dir}")
         print("Training metrics, validation OCR metrics, and loss plot logged to MLflow.")
