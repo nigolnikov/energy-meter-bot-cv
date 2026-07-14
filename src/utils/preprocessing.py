@@ -3,33 +3,10 @@ import os
 import cv2
 import numpy as np
 import torch
-import torch.nn as nn
 
 from src.detection.infer_meter_screen import infer as yolo1_infer
 from src.utils.logger import logger
-
-
-class enhance_net_nopool(nn.Module):
-    """
-    ЗАГЛУШКА Zero-DCE++ сети — Role C заменит на реальную архитектуру.
-
-    Используется в: src/utils/preprocessing.py → ZeroDCEEnhancer.__init__()
-
-    Контракт forward():
-        Вход:  torch.Tensor shape (1, 3, H, W), float32, значения [0.0 .. 1.0]
-        Выход: list где [0] — torch.Tensor той же формы (1, 3, H, W)
-
-    Сейчас: возвращает вход без изменений (identity).
-    Картинка не улучшается, но ZeroDCEEnhancer не падает c ошибкой.
-    """
-
-    def __init__(self, scale_factor: int = 1):
-        super().__init__()
-        # TODO Role C: здесь будут сверточные слои DCE-Net
-
-    def forward(self, x: torch.Tensor) -> list:
-        # TODO Role C: заменить на реальный проход через сеть
-        return [x]
+from src.utils.zero_dce_model import enhance_net_nopool
 
 
 class ObjectDetector:
@@ -69,7 +46,7 @@ class ZeroDCEEnhancer:
 
         logger.info(f"Loading Zero-DCE++ weights from {weights_path}")
         self.model = enhance_net_nopool(scale_factor=1)  # <-- вот это
-        self.model.load_state_dict(torch.load(weights_path, map_location="cpu"))
+        self.model.load_state_dict(torch.load(weights_path, map_location="cpu", weights_only=True))
         self.model.eval()
         logger.info("Zero-DCE++ model loaded successfully")
 
@@ -267,3 +244,13 @@ def validate_reading(text: str) -> bool:
         return False
 
     return all(ch.isdigit() or ch == "." for ch in text)
+
+
+def apply_enhancement(image_bgr: np.ndarray, method: str) -> np.ndarray:
+    if method == "none":
+        return image_bgr
+    if method == "clahe":
+        return apply_clahe(image_bgr)
+    if method == "zerodce":
+        return ZeroDCEEnhancer().enhance(image_bgr)
+    raise ValueError(f"Unknown Enhancement method: {method}")

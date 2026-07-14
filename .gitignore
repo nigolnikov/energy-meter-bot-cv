@@ -20,6 +20,8 @@ runs/
 *.csv
 
 # Models
+snapshots_Zero_DCE++/
+
 models/
 *.pt
 *.pth

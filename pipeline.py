@@ -8,7 +8,7 @@ from src.ocr.infer_trocr import ocr_infer
 from src.utils.contracts import PipelineResult
 from src.utils.logger import logger
 from src.utils.preprocessing import (
-    apply_clahe,
+    apply_enhancement,
     crop_bbox,
     crop_obb,
     obb_to_bbox,
@@ -19,7 +19,7 @@ from src.utils.preprocessing import (
 from src.utils.visualization import draw_pipeline_result, save_visualization
 
 
-def run_pipeline(image_path: str) -> PipelineResult:
+def run_pipeline(image_path: str, enhancement: str = "clahe") -> PipelineResult:
     """
     Main function which will take the way to image, gives the result.
     """
@@ -73,8 +73,8 @@ def run_pipeline(image_path: str) -> PipelineResult:
     screen_crop = crop_obb(image, screen_det.bbox)
 
     # 4. Enhancement
-    logger.info("Applting CLAHE enhancement")
-    screen_enhanced = apply_clahe(screen_crop)
+    logger.info(f"Applying enhancement: {enhancement}")
+    screen_enhanced = apply_enhancement(screen_crop, enhancement)
 
     # 5. YOLO #2
     logger.info("Running YOLO #2 (reading area detection)...")
