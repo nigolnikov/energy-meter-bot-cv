@@ -1,6 +1,3 @@
-# TrOCR — evaluation for meter reading OCR.
-# Responsible for comparing model predictions with true labels.
-
 import argparse
 from pathlib import Path
 
@@ -11,6 +8,7 @@ from PIL import Image
 from transformers import TrOCRProcessor, VisionEncoderDecoderModel
 
 from src.ocr.infer_trocr import infer
+from src.ocr.text import decode_label, is_valid_reading
 from src.utils.logger import logger
 
 MODEL_PATH = "models/trocr-meter-finetuned"
@@ -34,13 +32,7 @@ def load_model(
 
 
 def character_error_rate(true_text: str, predicted_text: str) -> float:
-    cer = jiwer.cer(true_text, predicted_text)
-    return cer
-
-
-def word_error_rate(true_text: str, predicted_text: str) -> float:
-    wer = jiwer.wer(true_text, predicted_text)
-    return wer
+    return jiwer.cer(true_text, predicted_text)
 
 
 def digit_accuracy(true_text: str, predicted_text: str) -> float:
@@ -71,6 +63,22 @@ def numeric_error(true_text: str, predicted_text: str) -> float | None:
     return abs(true_number - predicted_number)
 
 
+def classify_error(true_text: str, predicted_text: str) -> str:
+    if true_text == predicted_text:
+        return "correct"
+
+    digits_match = true_text.replace(".", "") == predicted_text.replace(".", "")
+    dot_match = true_text.find(".") == predicted_text.find(".")
+
+    if digits_match and not dot_match:
+        return "dot_only"
+
+    if not digits_match and dot_match:
+        return "digits_only"
+
+    return "both"
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Evaluate TrOCR model")
 
@@ -91,7 +99,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--model",
         type=str,
-        default="microsoft/small-stage1",
+        default=MODEL_PATH,
+    )
+
+    parser.add_argument(
+        "--output-prefix",
+        type=str,
+        default="trocr",
+        help="Prefix for the predictions/summary CSVs.",
     )
 
     return parser.parse_args()
@@ -128,22 +143,22 @@ def main() -> None:
                 processor=processor,
                 model=model,
                 device=device,
-                max_new_tokens=9,
             )
 
-        predicted_text = result.text.strip()
+        predicted_text = decode_label(result.text)
 
         exact_match = true_text == predicted_text
         cer = character_error_rate(true_text, predicted_text)
-        wer = word_error_rate(true_text, predicted_text)
         digit_acc = digit_accuracy(true_text, predicted_text)
         num_error = numeric_error(true_text, predicted_text)
+        error_type = classify_error(true_text, predicted_text)
 
         print(
             f"Image: {image_name} | "
             f"True: {true_text} | "
             f"Predicted: {predicted_text} | "
-            f"Exact: {exact_match}"
+            f"Exact: {exact_match} | "
+            f"Error: {error_type}"
         )
 
         results.append(
@@ -154,33 +169,56 @@ def main() -> None:
                 "confidence": result.confidence,
                 "exact_match": exact_match,
                 "cer": cer,
-                "wer": wer,
                 "digit_accuracy": digit_acc,
                 "numeric_error": num_error,
+                "error_type": error_type,
+                "valid_format": is_valid_reading(predicted_text),
+                "digits_match": true_text.replace(".", "") == predicted_text.replace(".", ""),
+                "dot_match": true_text.find(".") == predicted_text.find("."),
             }
         )
 
     results_df = pd.DataFrame(results)
-    results_df.to_csv("trocr_predictions.csv", index=False)
+
+    predictions_path = f"{args.output_prefix}_predictions.csv"
+    summary_path = f"{args.output_prefix}_summary.csv"
+
+    results_df.to_csv(predictions_path, index=False)
+
+    error_share = results_df["error_type"].value_counts(normalize=True)
 
     summary = {
         "num_images": len(results_df),
         "exact_match_accuracy": results_df["exact_match"].mean(),
         "mean_cer": results_df["cer"].mean(),
-        "mean_wer": results_df["wer"].mean(),
         "mean_digit_accuracy": results_df["digit_accuracy"].mean(),
+        # Digits right but dot misplaced, vs. dot right but digits misread.
+        "digits_match_accuracy": results_df["digits_match"].mean(),
+        "dot_position_accuracy": results_df["dot_match"].mean(),
+        "error_dot_only": error_share.get("dot_only", 0.0),
+        "error_digits_only": error_share.get("digits_only", 0.0),
+        "error_both": error_share.get("both", 0.0),
+        "invalid_format_rate": 1 - results_df["valid_format"].mean(),
         "mean_numeric_error": results_df["numeric_error"].dropna().mean(),
         "median_numeric_error": results_df["numeric_error"].dropna().median(),
     }
 
     summary_df = pd.DataFrame([summary])
-    summary_df.to_csv("trocr_summary.csv", index=False)
+    summary_df.to_csv(summary_path, index=False)
 
-    logger.info("Saved evaluation results to trocr_predictions.csv")
-    logger.info("Saved evaluation summary to trocr_summary.csv")
+    logger.info(f"Saved evaluation results to {predictions_path}")
+    logger.info(f"Saved evaluation summary to {summary_path}")
 
     print("\nEvaluation summary:")
     print(summary_df.to_string(index=False))
+
+    print("\nWorst predictions:")
+    worst = results_df[~results_df["exact_match"]].sort_values("cer", ascending=False).head(10)
+    print(
+        worst[["filename", "true_text", "predicted_text", "error_type", "cer"]].to_string(
+            index=False
+        )
+    )
 
 
 if __name__ == "__main__":

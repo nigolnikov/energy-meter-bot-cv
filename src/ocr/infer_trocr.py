@@ -1,7 +1,3 @@
-# TrOCR — inference for meter reading OCR.
-# Responsible only for loading the model and predicting text from images.
-
-
 import numpy as np
 import torch
 from PIL import Image
@@ -16,7 +12,6 @@ def infer(
     processor: TrOCRProcessor,
     model: VisionEncoderDecoderModel,
     device: torch.device,
-    max_new_tokens: int = 14,
     num_beams: int = 4,
 ) -> OCRResult:
     image = image.convert("RGB")
@@ -29,7 +24,6 @@ def infer(
     with torch.no_grad():
         output = model.generate(
             pixel_values,
-            max_new_tokens=max_new_tokens,
             num_beams=num_beams,
             early_stopping=True,
             output_scores=True,
@@ -73,7 +67,6 @@ def infer(
     if valid_length == 0:
         confidence = 0.0
     else:
-        # Geometric mean of generated token probabilities.
         confidence = float(valid_log_probs.mean().exp())
 
     min_confidence = float(valid_probs.min()) if valid_length > 0 else 0.0
@@ -91,19 +84,6 @@ def infer(
 
 
 def ocr_infer(image: np.ndarray) -> OCRResult:
-    """
-    TrOCR inference for one cropped meter-reading image.
-
-    Input:
-        image: np.ndarray
-            Shape (H, W) or (H, W, 3)
-
-    Output:
-        OCRResult:
-            text: raw model prediction
-            confidence: geometric mean of generated token probabilities
-    """
-
     if image is None:
         raise ValueError("ocr_infer received image=None")
 
@@ -146,6 +126,5 @@ def ocr_infer(image: np.ndarray) -> OCRResult:
         processor=processor,
         model=model,
         device=device,
-        max_new_tokens=9,
         num_beams=4,
     )
