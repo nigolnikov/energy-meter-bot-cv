@@ -8,14 +8,16 @@ import numpy as np
 import pandas as pd
 from PIL import Image
 
+from src.ocr.augmentations import DiagonalReflection, LCDGlare, LowContrastLCD, SealThreads
 from src.ocr.infer_trocr import ocr_infer
+from src.ocr.text import decode_label, is_valid_reading
 
 
 def normalize_text(text: str) -> str:
     if text is None:
         return ""
 
-    return str(text).strip().replace(" ", "")
+    return decode_label(text)
 
 
 def compute_digit_accuracy(true_text: str, pred_text: str) -> float:
@@ -35,13 +37,36 @@ def compute_digit_accuracy(true_text: str, pred_text: str) -> float:
     return correct / max_len
 
 
+def numeric_error(true_text: str, pred_text: str) -> float | None:
+    try:
+        return abs(float(true_text) - float(pred_text))
+    except ValueError:
+        return None
+
+
+def classify_error(true_text: str, pred_text: str) -> str:
+    if true_text == pred_text:
+        return "correct"
+
+    digits_match = true_text.replace(".", "") == pred_text.replace(".", "")
+    dot_match = true_text.find(".") == pred_text.find(".")
+
+    if digits_match and not dot_match:
+        return "dot_only"
+
+    if not digits_match and dot_match:
+        return "digits_only"
+
+    return "both"
+
+
 def build_robustness_transforms() -> dict[str, A.Compose | None]:
     return {
         "clean": None,
         "perspective_mild": A.Compose(
             [
                 A.Perspective(
-                    scale=(0.015, 0.025),
+                    scale=(0.015, 0.018),
                     keep_size=True,
                     fit_output=False,
                     border_mode=cv2.BORDER_REPLICATE,
@@ -53,17 +78,6 @@ def build_robustness_transforms() -> dict[str, A.Compose | None]:
             [
                 A.Perspective(
                     scale=(0.03, 0.05),
-                    keep_size=True,
-                    fit_output=False,
-                    border_mode=cv2.BORDER_REPLICATE,
-                    p=1.0,
-                ),
-            ]
-        ),
-        "perspective_strong": A.Compose(
-            [
-                A.Perspective(
-                    scale=(0.05, 0.075),
                     keep_size=True,
                     fit_output=False,
                     border_mode=cv2.BORDER_REPLICATE,
@@ -113,7 +127,7 @@ def build_robustness_transforms() -> dict[str, A.Compose | None]:
         "downscale_medium": A.Compose(
             [
                 A.Downscale(
-                    scale_range=(0.25, 0.45),
+                    scale_range=(0.3, 0.31),
                     interpolation_pair={
                         "downscale": cv2.INTER_NEAREST,
                         "upscale": cv2.INTER_NEAREST,
@@ -142,6 +156,11 @@ def build_robustness_transforms() -> dict[str, A.Compose | None]:
                     shadow_dimension=3,
                     p=1.0,
                 ),
+                A.GaussianBlur(
+                    blur_limit=(7, 15),
+                    sigma_limit=(3.0, 8.0),
+                    p=1.0,
+                ),
             ]
         ),
         "shadow_medium": A.Compose(
@@ -160,6 +179,99 @@ def build_robustness_transforms() -> dict[str, A.Compose | None]:
                     shadow_roi=(0, 0, 1, 1),
                     num_shadows_limit=(2, 3),
                     shadow_dimension=7,
+                    p=1.0,
+                ),
+            ]
+        ),
+        "lcdg": A.Compose(
+            [
+                LCDGlare(
+                    alpha_range=(0.25, 0.6),
+                    blur_range=(31, 91),
+                    p=1.0,
+                ),
+            ]
+        ),
+        "diagonal": A.Compose(
+            [
+                DiagonalReflection(
+                    brightness_range=(30, 80),
+                    blur_range=(21, 61),
+                    p=1.0,
+                ),
+            ]
+        ),
+        "low_contrast": A.Compose(
+            [
+                LowContrastLCD(
+                    contrast_range=(0.5, 0.85),
+                    brightness_shift=(-10, 25),
+                    p=1.0,
+                ),
+            ]
+        ),
+        "threads_mild": A.Compose(
+            [
+                SealThreads(
+                    num_threads=(1, 1),
+                    alpha=(0.35, 0.55),
+                    thickness_frac=(0.005, 0.010),
+                    softness=(0.5, 1.2),
+                    p=1.0,
+                ),
+            ]
+        ),
+        "threads_medium": A.Compose(
+            [
+                SealThreads(
+                    num_threads=(1, 2),
+                    alpha=(0.5, 0.8),
+                    thickness_frac=(0.006, 0.016),
+                    softness=(0.2, 1.0),
+                    p=1.0,
+                ),
+            ]
+        ),
+        "threads_strong": A.Compose(
+            [
+                SealThreads(
+                    num_threads=(3, 4),
+                    alpha=(0.85, 1.0),
+                    thickness_frac=(0.018, 0.030),
+                    max_tilt_deg=70.0,
+                    softness=(0.0, 0.3),
+                    p=1.0,
+                ),
+            ]
+        ),
+        "threads_medium_blur_medium": A.Compose(
+            [
+                SealThreads(
+                    num_threads=(1, 2),
+                    alpha=(0.5, 0.8),
+                    thickness_frac=(0.006, 0.016),
+                    softness=(0.2, 1.0),
+                    p=1.0,
+                ),
+                A.MotionBlur(
+                    blur_limit=(15, 25),
+                    angle_range=(0, 360),
+                    p=1.0,
+                ),
+            ]
+        ),
+        "threads_medium_glare": A.Compose(
+            [
+                SealThreads(
+                    num_threads=(1, 2),
+                    alpha=(0.5, 0.8),
+                    thickness_frac=(0.006, 0.016),
+                    softness=(0.2, 1.0),
+                    p=1.0,
+                ),
+                LCDGlare(
+                    alpha_range=(0.25, 0.6),
+                    blur_range=(31, 91),
                     p=1.0,
                 ),
             ]
@@ -199,8 +311,9 @@ def evaluate_transform(
     exact_matches = []
     digit_accuracies = []
     cers = []
-    wers = []
     numeric_errors = []
+    valid_formats = []
+    error_types = []
 
     for _, row in labels_df.iterrows():
         filename = str(row[image_column])
@@ -217,8 +330,6 @@ def evaluate_transform(
 
         transformed_image = apply_transform(image_np, transform)
 
-        transformed_image = cv2.cvtColor(transformed_image, cv2.COLOR_BGR2GRAY)
-
         prediction = ocr_infer(transformed_image)
 
         pred_text = normalize_text(prediction.text)
@@ -226,13 +337,19 @@ def evaluate_transform(
         is_exact = true_text == pred_text
 
         cer = jiwer.cer(true_text, pred_text)
-        wer = jiwer.wer(true_text, pred_text)
         digit_accuracy = compute_digit_accuracy(true_text, pred_text)
+        num_error = numeric_error(true_text, pred_text)
+        error_type = classify_error(true_text, pred_text)
+        valid_format = is_valid_reading(pred_text)
 
         exact_matches.append(is_exact)
         digit_accuracies.append(digit_accuracy)
         cers.append(cer)
-        wers.append(wer)
+        valid_formats.append(valid_format)
+        error_types.append(error_type)
+
+        if num_error is not None:
+            numeric_errors.append(num_error)
 
         prediction_rows.append(
             {
@@ -242,34 +359,38 @@ def evaluate_transform(
                 "predicted_text": pred_text,
                 "exact_match": is_exact,
                 "cer": cer,
-                "wer": wer,
                 "digit_accuracy": digit_accuracy,
+                "numeric_error": num_error,
+                "error_type": error_type,
+                "valid_format": valid_format,
             }
         )
 
     total = len(prediction_rows)
 
     if total == 0:
-        summary = {
+        return {
             "robustness_test": test_name,
             "total": 0,
             "accuracy": 0.0,
             "cer": 0.0,
-            "wer": 0.0,
             "digit_accuracy": 0.0,
-            "numeric_error": None,
-        }
+            "dot_error_rate": 0.0,
+            "invalid_format_rate": 0.0,
+            "median_numeric_error": None,
+        }, prediction_rows
 
-        return summary, prediction_rows
+    error_counts = pd.Series(error_types).value_counts()
 
     summary = {
         "robustness_test": test_name,
         "total": total,
         "accuracy": float(np.mean(exact_matches)) * 100.0,
         "cer": float(np.mean(cers)),
-        "wer": float(np.mean(wers)),
         "digit_accuracy": float(np.mean(digit_accuracies)) * 100.0,
-        "numeric_error": float(np.mean(numeric_errors)) if numeric_errors else None,
+        "dot_error_rate": float(error_counts.get("dot_only", 0)) / total * 100.0,
+        "invalid_format_rate": (1.0 - float(np.mean(valid_formats))) * 100.0,
+        "median_numeric_error": float(np.median(numeric_errors)) if numeric_errors else None,
     }
 
     return summary, prediction_rows
@@ -343,6 +464,9 @@ def main():
             delta = 0.0
             status = "BASELINE"
         else:
+            if baseline_accuracy is None:
+                raise RuntimeError("The 'clean' baseline must run first.")
+
             delta = summary["accuracy"] - baseline_accuracy
             status = get_status(delta)
 
@@ -362,17 +486,19 @@ def main():
             "accuracy",
             "delta",
             "cer",
-            "wer",
             "digit_accuracy",
+            "dot_error_rate",
+            "invalid_format_rate",
+            "median_numeric_error",
             "status",
         ]
     ]
 
-    summary_df["accuracy"] = summary_df["accuracy"].round(2)
-    summary_df["delta"] = summary_df["delta"].round(2)
+    for column in ["accuracy", "delta", "digit_accuracy", "dot_error_rate", "invalid_format_rate"]:
+        summary_df[column] = summary_df[column].round(2)
+
     summary_df["cer"] = summary_df["cer"].round(4)
-    summary_df["wer"] = summary_df["wer"].round(4)
-    summary_df["digit_accuracy"] = summary_df["digit_accuracy"].round(2)
+    summary_df["median_numeric_error"] = summary_df["median_numeric_error"].round(3)
 
     summary_path = args.output_dir / "robustness_summary.csv"
     predictions_path = args.output_dir / "robustness_predictions.csv"
@@ -381,7 +507,7 @@ def main():
     predictions_df.to_csv(predictions_path, index=False)
 
     print()
-    print(summary_df)
+    print(summary_df.to_string(index=False))
     print()
     print(f"Saved summary to: {summary_path}")
     print(f"Saved predictions to: {predictions_path}")

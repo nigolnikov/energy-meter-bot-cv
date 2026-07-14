@@ -1,6 +1,9 @@
 import argparse
+import json
 import os
 import random
+import shutil
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 
@@ -28,14 +31,19 @@ from transformers import (
 )
 
 from src.ocr.augmentations import build_train_augmentations
+from src.ocr.reporting import REPORT_DIRNAME, log_evaluation_report, plot_augmentation_samples
+from src.ocr.text import decode_label, encode_label
 from src.utils.config import load_yaml_config
 
 DEFAULT_EPOCHS = 10
 DEFAULT_BATCH_SIZE = 4
 DEFAULT_LEARNING_RATE = 2e-5
-DEFAULT_MAX_TARGET_LENGTH = 10
+
+DEFAULT_MAX_TARGET_LENGTH = 13
 DEFAULT_WEIGHT_DECAY = 0.01
 DEFAULT_SEED = 42
+
+PLOTS_DIRNAME = "plots"
 
 
 class MeterOCRDataset(Dataset):
@@ -64,7 +72,7 @@ class MeterOCRDataset(Dataset):
         if text_column not in self.df.columns:
             raise ValueError(f"Column '{text_column}' not found in {labels_csv}")
 
-        self.df[text_column] = self.df[text_column].astype(str)
+        self.df[text_column] = self.df[text_column].astype(str).str.strip()
 
     def __len__(self):
         return len(self.df)
@@ -93,7 +101,7 @@ class MeterOCRDataset(Dataset):
         ).pixel_values.squeeze(0)
 
         labels = self.processor.tokenizer(
-            text,
+            encode_label(text),
             padding="max_length",
             max_length=self.max_target_length,
             truncation=True,
@@ -125,7 +133,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model-name", type=str, default=None)
     parser.add_argument("--run-name", type=str, default=None)
     parser.add_argument("--max-target-length", type=int, default=None)
+    parser.add_argument("--length-penalty", type=float, default=None)
+    parser.add_argument("--num-beams", type=int, default=None)
     parser.add_argument("--seed", type=int, default=None)
+    parser.add_argument(
+        "--no-mlflow",
+        action="store_true",
+        help="Force a local-only run even if the config has an mlflow section.",
+    )
 
     return parser.parse_args()
 
@@ -146,14 +161,23 @@ def apply_overrides(config: dict[str, Any], args: argparse.Namespace) -> dict[st
     if args.max_target_length is not None:
         config["train"]["max_target_length"] = args.max_target_length
 
+    if args.length_penalty is not None:
+        config["train"]["length_penalty"] = args.length_penalty
+
+    if args.num_beams is not None:
+        config["train"]["num_beams"] = args.num_beams
+
     if args.model_name is not None:
         config["model"]["name"] = args.model_name
 
     if args.run_name is not None:
-        config["experiment"]["run_name"] = args.run_name
+        config.setdefault("experiment", {})["run_name"] = args.run_name
 
     if args.seed is not None:
         config["train"]["seed"] = args.seed
+
+    if args.no_mlflow:
+        config.pop("mlflow", None)
 
     return config
 
@@ -166,7 +190,12 @@ def apply_default_train_values(config: dict[str, Any]) -> dict[str, Any]:
     train_cfg.setdefault("learning_rate", DEFAULT_LEARNING_RATE)
     train_cfg.setdefault("max_target_length", DEFAULT_MAX_TARGET_LENGTH)
     train_cfg.setdefault("weight_decay", DEFAULT_WEIGHT_DECAY)
+    train_cfg.setdefault("length_penalty", 1.0)
+    train_cfg.setdefault("num_beams", 4)
     train_cfg.setdefault("seed", DEFAULT_SEED)
+
+    # train_cfg.setdefault("warmup_ratio", 0.1)
+    # train_cfg.setdefault("lr_scheduler_type", "cosine")
 
     return config
 
@@ -184,9 +213,44 @@ def seed_everything(seed: int) -> None:
     torch.backends.cudnn.benchmark = False
 
 
-def load_model_and_processor(model_name: str, max_target_length: int):
+def check_label_encoding(processor: TrOCRProcessor, dataset: Dataset) -> None:
+    tokenizer = processor.tokenizer
+    texts = dataset.df[dataset.text_column].tolist()
+
+    lengths = np.array([len(tokenizer(encode_label(text)).input_ids) for text in texts])
+    truncated = int((lengths > dataset.max_target_length).sum())
+
+    sample = texts[0]
+    tokens = tokenizer.tokenize(encode_label(sample))
+
+    print(f"Label encoding check on {len(texts)} labels:")
+    print(f"  {sample!r} -> {encode_label(sample)!r} -> {tokens}")
+    print(f"  tokens per label: max={lengths.max()}, max_target_length={dataset.max_target_length}")
+
+    expected = len(sample) + 2
+    actual = len(tokenizer(encode_label(sample)).input_ids)
+
+    if actual != expected:
+        print(
+            f"  WARNING: {sample!r} has {len(sample)} chars but encodes to {actual} tokens "
+            f"(expected {expected}). The tokenizer is still merging glyphs."
+        )
+
+    if truncated:
+        raise ValueError(
+            f"{truncated} labels exceed max_target_length={dataset.max_target_length} "
+            f"(longest is {lengths.max()}). Raise it, or ground truth is being cut off."
+        )
+
+
+def load_model_and_processor(
+    model_name: str,
+    max_target_length: int,
+    length_penalty: float,
+    num_beams: int,
+):
     processor = TrOCRProcessor.from_pretrained(model_name)
-    model = VisionEncoderDecoderModel.from_pretrained(model_name)
+    model = VisionEncoderDecoderModel.from_pretrained(model_name, use_safetensors=True)
 
     model.config.decoder_start_token_id = processor.tokenizer.cls_token_id
     model.config.pad_token_id = processor.tokenizer.pad_token_id
@@ -200,18 +264,14 @@ def load_model_and_processor(model_name: str, max_target_length: int):
     model.generation_config.max_length = max_target_length
     model.generation_config.early_stopping = True
     model.generation_config.no_repeat_ngram_size = 0
-    model.generation_config.length_penalty = 2.0
-    model.generation_config.num_beams = 4
+    model.generation_config.length_penalty = length_penalty
+    model.generation_config.num_beams = num_beams
 
     return processor, model
 
 
 def character_error_rate(true_text: str, predicted_text: str) -> float:
     return jiwer.cer(true_text, predicted_text)
-
-
-def word_error_rate(true_text: str, predicted_text: str) -> float:
-    return jiwer.wer(true_text, predicted_text)
 
 
 def digit_accuracy(true_text: str, predicted_text: str) -> float:
@@ -246,30 +306,39 @@ def compute_ocr_metrics_from_texts(
     predictions: list[str],
     references: list[str],
 ) -> dict[str, float]:
-    predictions = [str(prediction).strip() for prediction in predictions]
-    references = [str(reference).strip() for reference in references]
-
     exact_match_values = []
     cer_values = []
-    wer_values = []
     digit_accuracy_values = []
+    digits_only_match_values = []
+    dot_match_values = []
     numeric_error_values = []
+
+    parse_failures = 0
 
     for true_text, predicted_text in zip(references, predictions, strict=False):
         exact_match_values.append(true_text == predicted_text)
         cer_values.append(character_error_rate(true_text, predicted_text))
-        wer_values.append(word_error_rate(true_text, predicted_text))
         digit_accuracy_values.append(digit_accuracy(true_text, predicted_text))
 
+        digits_only_match_values.append(
+            true_text.replace(".", "") == predicted_text.replace(".", "")
+        )
+        dot_match_values.append(true_text.find(".") == predicted_text.find("."))
+
         num_error = numeric_error(true_text, predicted_text)
+
         if num_error is not None:
             numeric_error_values.append(num_error)
+        else:
+            parse_failures += 1
 
     metrics = {
         "exact_match_accuracy": float(np.mean(exact_match_values)),
         "mean_cer": float(np.mean(cer_values)),
-        "mean_wer": float(np.mean(wer_values)),
         "mean_digit_accuracy": float(np.mean(digit_accuracy_values)),
+        "digits_only_accuracy": float(np.mean(digits_only_match_values)),
+        "dot_position_accuracy": float(np.mean(dot_match_values)),
+        "invalid_format_rate": parse_failures / max(len(predictions), 1),
     }
 
     if numeric_error_values:
@@ -293,15 +362,14 @@ def build_compute_metrics(processor: TrOCRProcessor):
             processor.tokenizer.pad_token_id,
         )
 
-        decoded_predictions = processor.batch_decode(
-            predictions,
-            skip_special_tokens=True,
-        )
+        decoded_predictions = [
+            decode_label(text)
+            for text in processor.batch_decode(predictions, skip_special_tokens=True)
+        ]
 
-        decoded_labels = processor.batch_decode(
-            labels,
-            skip_special_tokens=True,
-        )
+        decoded_labels = [
+            decode_label(text) for text in processor.batch_decode(labels, skip_special_tokens=True)
+        ]
 
         return compute_ocr_metrics_from_texts(
             predictions=decoded_predictions,
@@ -311,30 +379,69 @@ def build_compute_metrics(processor: TrOCRProcessor):
     return compute_metrics
 
 
-def log_params(config: dict[str, Any]) -> None:
+def save_json(data: Any, path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    with path.open("w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False, default=str)
+
+
+def build_params(config: dict[str, Any]) -> dict[str, Any]:
     train_cfg = config["train"]
     data_cfg = config["data"]
     model_cfg = config["model"]
+    experiment_cfg = config.get("experiment", {})
 
-    mlflow.log_params(
-        {
-            "model_name": model_cfg["name"],
-            "train_images": data_cfg["train_images"],
-            "train_labels": data_cfg["train_labels"],
-            "val_images": data_cfg["val_images"],
-            "val_labels": data_cfg["val_labels"],
-            "image_column": data_cfg["image_column"],
-            "text_column": data_cfg["text_column"],
-            "output_dir": train_cfg["output_dir"],
-            "epochs": train_cfg["epochs"],
-            "batch_size": train_cfg["batch_size"],
-            "learning_rate": train_cfg["learning_rate"],
-            "weight_decay": train_cfg["weight_decay"],
-            "max_target_length": train_cfg["max_target_length"],
-            "fp16": torch.cuda.is_available(),
-            "seed": train_cfg["seed"],
-        }
-    )
+    return {
+        "run_name": experiment_cfg.get("run_name"),
+        "experiment_name": experiment_cfg.get("name"),
+        "model_name": model_cfg["name"],
+        "train_images": data_cfg["train_images"],
+        "train_labels": data_cfg["train_labels"],
+        "val_images": data_cfg["val_images"],
+        "val_labels": data_cfg["val_labels"],
+        "image_column": data_cfg["image_column"],
+        "text_column": data_cfg["text_column"],
+        "output_dir": train_cfg["output_dir"],
+        "epochs": train_cfg["epochs"],
+        "batch_size": train_cfg["batch_size"],
+        "learning_rate": train_cfg["learning_rate"],
+        "weight_decay": train_cfg["weight_decay"],
+        "max_target_length": train_cfg["max_target_length"],
+        "length_penalty": train_cfg["length_penalty"],
+        "num_beams": train_cfg["num_beams"],
+        "label_encoding": "char_level",
+        "fp16": torch.cuda.is_available(),
+        "seed": train_cfg["seed"],
+        # "warmup_ratio": train_cfg["warmup_ratio"],
+        # "lr_scheduler_type": train_cfg["lr_scheduler_type"],
+    }
+
+
+def save_run_inputs(config: dict[str, Any], config_path: str, plots_dir: Path) -> None:
+    save_json(build_params(config), plots_dir / "params.json")
+    shutil.copy(config_path, plots_dir / f"config{Path(config_path).suffix}")
+
+
+def mlflow_enabled(config: dict[str, Any]) -> bool:
+    return bool(config.get("mlflow", {}).get("tracking_uri"))
+
+
+def start_mlflow_run(config: dict[str, Any]):
+    if not mlflow_enabled(config):
+        return nullcontext()
+
+    mlflow_cfg = config["mlflow"]
+    experiment_cfg = config.get("experiment", {})
+
+    os.environ["MLFLOW_TRACKING_URI"] = mlflow_cfg["tracking_uri"]
+    mlflow.set_tracking_uri(mlflow_cfg["tracking_uri"])
+
+    if experiment_cfg.get("name"):
+        os.environ["MLFLOW_EXPERIMENT_NAME"] = experiment_cfg["name"]
+        mlflow.set_experiment(experiment_cfg["name"])
+
+    return mlflow.start_run(run_name=experiment_cfg.get("run_name"))
 
 
 def log_trainer_history_to_mlflow(trainer: Seq2SeqTrainer) -> None:
@@ -344,15 +451,28 @@ def log_trainer_history_to_mlflow(trainer: Seq2SeqTrainer) -> None:
         if step is None:
             continue
 
-        for metric_name, metric_value in log.items():
-            if metric_name in {"step", "epoch"}:
+        for name, value in log.items():
+            if name in {"step", "epoch"}:
                 continue
 
-            if isinstance(metric_value, int | float):
-                mlflow.log_metric(metric_name, metric_value, step=step)
+            if isinstance(value, int | float):
+                mlflow.log_metric(name, value, step=step)
 
 
-def log_loss_plot(trainer: Seq2SeqTrainer, output_dir: Path) -> None:
+def log_numeric_metrics_to_mlflow(metrics: dict[str, Any]) -> None:
+    mlflow.log_metrics({k: v for k, v in metrics.items() if isinstance(v, int | float)})
+
+
+def save_trainer_history(trainer: Seq2SeqTrainer, plots_dir: Path) -> None:
+    save_json(trainer.state.log_history, plots_dir / "training_history.json")
+
+    eval_rows = [log for log in trainer.state.log_history if "eval_loss" in log]
+
+    if eval_rows:
+        pd.DataFrame(eval_rows).to_csv(plots_dir / "eval_history.csv", index=False)
+
+
+def save_loss_plot(trainer: Seq2SeqTrainer, plots_dir: Path) -> None:
     train_epochs = []
     train_losses = []
 
@@ -371,7 +491,7 @@ def log_loss_plot(trainer: Seq2SeqTrainer, output_dir: Path) -> None:
     if not train_losses and not eval_losses:
         return
 
-    output_dir.mkdir(parents=True, exist_ok=True)
+    plots_dir.mkdir(parents=True, exist_ok=True)
 
     plt.figure(figsize=(8, 5))
 
@@ -387,68 +507,61 @@ def log_loss_plot(trainer: Seq2SeqTrainer, output_dir: Path) -> None:
     plt.legend()
     plt.grid(True)
 
-    plot_path = output_dir / "loss_curve.png"
-    plt.savefig(plot_path, bbox_inches="tight")
+    plt.savefig(plots_dir / "loss_curve.png", bbox_inches="tight", dpi=150)
     plt.close()
 
-    mlflow.log_artifact(str(plot_path), artifact_path="plots")
 
+def save_metric_curves(trainer: Seq2SeqTrainer, plots_dir: Path) -> None:
+    tracked = {
+        "eval_mean_cer": "Validation CER",
+        "eval_exact_match_accuracy": "Exact match",
+        "eval_digits_only_accuracy": "Digits correct (ignoring dot)",
+        "eval_dot_position_accuracy": "Dot position correct",
+    }
 
-def log_cer_plot(trainer: Seq2SeqTrainer, output_dir: Path) -> None:
-    eval_epochs = []
-    eval_cer_values = []
+    series: dict[str, tuple[list[float], list[float]]] = {}
 
-    for log in trainer.state.log_history:
-        if "eval_mean_cer" in log and "epoch" in log:
-            eval_epochs.append(log["epoch"])
-            eval_cer_values.append(log["eval_mean_cer"])
+    for key in tracked:
+        epochs = []
+        values = []
 
-    if not eval_cer_values:
+        for log in trainer.state.log_history:
+            if key in log and "epoch" in log:
+                epochs.append(log["epoch"])
+                values.append(log[key])
+
+        if values:
+            series[key] = (epochs, values)
+
+    if not series:
         return
 
-    output_dir.mkdir(parents=True, exist_ok=True)
+    plots_dir.mkdir(parents=True, exist_ok=True)
 
-    plt.figure(figsize=(8, 5))
-    plt.plot(eval_epochs, eval_cer_values, marker="o", label="Validation CER")
+    plt.figure(figsize=(9, 5))
+
+    for key, (epochs, values) in series.items():
+        plt.plot(epochs, values, marker="o", label=tracked[key])
 
     plt.xlabel("Epoch")
-    plt.ylabel("CER")
-    plt.title("Validation CER by epoch")
+    plt.ylabel("Value")
+    plt.title("Validation metrics by epoch")
     plt.legend()
     plt.grid(True)
 
-    plot_path = output_dir / "cer_curve.png"
-    plt.savefig(plot_path, bbox_inches="tight")
+    plt.savefig(plots_dir / "metric_curves.png", bbox_inches="tight", dpi=150)
     plt.close()
 
-    mlflow.log_artifact(str(plot_path), artifact_path="plots")
 
-
-def log_model_artifacts(output_dir: Path) -> None:
-    artifacts = [
-        output_dir / "config.json",
-        output_dir / "generation_config.json",
-        output_dir / "model.safetensors",
-        output_dir / "pytorch_model.bin",
-        output_dir / "preprocessor_config.json",
-        output_dir / "tokenizer_config.json",
-        output_dir / "vocab.json",
-        output_dir / "merges.txt",
-        output_dir / "special_tokens_map.json",
-        output_dir / "training_args.bin",
-        output_dir / "trainer_state.json",
-    ]
-
-    for artifact in artifacts:
-        if artifact.exists():
-            mlflow.log_artifact(str(artifact), artifact_path="model")
-
-    for checkpoint_dir in output_dir.glob("checkpoint-*"):
-        if checkpoint_dir.is_dir():
-            mlflow.log_artifacts(
-                str(checkpoint_dir),
-                artifact_path=f"checkpoints/{checkpoint_dir.name}",
-            )
+def save_final_metrics(
+    train_metrics: dict[str, float],
+    eval_metrics: dict[str, float],
+    plots_dir: Path,
+) -> None:
+    save_json(
+        {"train": train_metrics, "eval": eval_metrics},
+        plots_dir / "final_metrics.json",
+    )
 
 
 def main() -> None:
@@ -458,27 +571,34 @@ def main() -> None:
     config = apply_overrides(config, args)
     config = apply_default_train_values(config)
 
-    experiment_cfg = config["experiment"]
-    mlflow_cfg = config["mlflow"]
-    model_cfg = config["model"]
-    data_cfg = config["data"]
-    train_cfg = config["train"]
+    use_mlflow = mlflow_enabled(config)
 
-    seed_everything(train_cfg["seed"])
+    with start_mlflow_run(config):
+        model_cfg = config["model"]
+        data_cfg = config["data"]
+        train_cfg = config["train"]
 
-    os.environ["MLFLOW_TRACKING_URI"] = mlflow_cfg["tracking_uri"]
-    os.environ["MLFLOW_EXPERIMENT_NAME"] = experiment_cfg["name"]
+        seed_everything(train_cfg["seed"])
 
-    mlflow.set_tracking_uri(mlflow_cfg["tracking_uri"])
-    mlflow.set_experiment(experiment_cfg["name"])
+        output_dir = Path(train_cfg["output_dir"])
+        output_dir.mkdir(parents=True, exist_ok=True)
 
-    with mlflow.start_run(run_name=experiment_cfg["run_name"]):
-        mlflow.log_artifact(args.config, artifact_path="config")
-        log_params(config)
+        plots_dir = output_dir / PLOTS_DIRNAME
+        plots_dir.mkdir(parents=True, exist_ok=True)
+
+        os.environ["HF_MLFLOW_LOG_ARTIFACTS"] = "0"
+
+        save_run_inputs(config, args.config, plots_dir)
+
+        if use_mlflow:
+            mlflow.log_artifact(args.config, artifact_path="config")
+            mlflow.log_params(build_params(config))
 
         processor, model = load_model_and_processor(
             model_cfg["name"],
             max_target_length=train_cfg["max_target_length"],
+            length_penalty=train_cfg["length_penalty"],
+            num_beams=train_cfg["num_beams"],
         )
 
         train_augmentations = build_train_augmentations()
@@ -503,6 +623,13 @@ def main() -> None:
             augmentations=None,
         )
 
+        check_label_encoding(processor, train_dataset)
+
+        plot_augmentation_samples(
+            train_dataset,
+            plots_dir / "augmentations.png",
+        )
+
         training_args = Seq2SeqTrainingArguments(
             output_dir=train_cfg["output_dir"],
             num_train_epochs=train_cfg["epochs"],
@@ -513,6 +640,8 @@ def main() -> None:
             seed=train_cfg["seed"],
             data_seed=train_cfg["seed"],
             predict_with_generate=True,
+            generation_max_length=train_cfg["max_target_length"],
+            generation_num_beams=train_cfg["num_beams"],
             eval_strategy="epoch",
             save_strategy="epoch",
             logging_strategy="steps",
@@ -521,9 +650,11 @@ def main() -> None:
             fp16=torch.cuda.is_available(),
             remove_unused_columns=False,
             load_best_model_at_end=True,
-            metric_for_best_model="eval_loss",
-            greater_is_better=False,
+            metric_for_best_model="eval_exact_match_accuracy",
+            greater_is_better=True,
             report_to="none",
+            # warmup_ratio=train_cfg["warmup_ratio"],
+            # lr_scheduler_type=train_cfg["lr_scheduler_type"],
         )
 
         trainer = Seq2SeqTrainer(
@@ -537,26 +668,42 @@ def main() -> None:
         )
 
         train_result = trainer.train()
-
-        output_dir = Path(train_cfg["output_dir"])
-        output_dir.mkdir(parents=True, exist_ok=True)
-
-        train_metrics = train_result.metrics
-        mlflow.log_metrics(train_metrics)
-
         eval_metrics = trainer.evaluate()
-        mlflow.log_metrics(eval_metrics)
 
         trainer.save_model(output_dir)
         processor.save_pretrained(output_dir)
 
-        log_trainer_history_to_mlflow(trainer)
-        log_loss_plot(trainer, output_dir)
-        log_model_artifacts(output_dir)
-        log_cer_plot(trainer, output_dir)
+        save_trainer_history(trainer, plots_dir)
+        save_loss_plot(trainer, plots_dir)
+        save_metric_curves(trainer, plots_dir)
+        save_final_metrics(train_result.metrics, eval_metrics, plots_dir)
+
+        log_evaluation_report(
+            model=trainer.model,
+            processor=processor,
+            dataset=val_dataset,
+            output_dir=output_dir,
+            batch_size=train_cfg["batch_size"],
+        )
+
+        if use_mlflow:
+            log_numeric_metrics_to_mlflow(train_result.metrics)
+            log_numeric_metrics_to_mlflow(eval_metrics)
+            log_trainer_history_to_mlflow(trainer)
+
+            mlflow.log_artifacts(str(plots_dir), artifact_path=PLOTS_DIRNAME)
+            mlflow.log_artifacts(str(output_dir / REPORT_DIRNAME), artifact_path=REPORT_DIRNAME)
+
+            if config["mlflow"].get("log_model"):
+                mlflow.log_artifacts(str(output_dir), artifact_path="model")
 
         print(f"Training finished. Model saved to: {output_dir}")
-        print("Training metrics, validation OCR metrics, and loss plot logged to MLflow.")
+        print(f"Plots, params and metrics: {plots_dir}")
+        print(f"Training metrics: {train_result.metrics}")
+        print(f"Validation metrics: {eval_metrics}")
+
+        if use_mlflow:
+            print(f"Logged to MLflow at: {config['mlflow']['tracking_uri']}")
 
 
 if __name__ == "__main__":
