@@ -26,10 +26,3 @@ def digit_accuracy(true_text: str, predicted_text: str) -> float:
             correct += 1
 
     return correct / max_len
-
-
-def numeric_error(true_text: str, predicted_text: str) -> float | None:
-    try:
-        return abs(float(true_text) - float(predicted_text))
-    except ValueError:
-        return None
