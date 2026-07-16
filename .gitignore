@@ -18,6 +18,7 @@ runs/
 *.zip
 *.tar
 *.csv
+output.jpg
 
 # Models
 snapshots_Zero_DCE++/

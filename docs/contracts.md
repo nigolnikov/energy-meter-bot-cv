@@ -79,12 +79,14 @@ Output
   "raw_text": "0012 3",
   "value": "00123",
   "confidence": 0.91,
-  "status": "ok | no_meter | no_reading | low_confidence"
+  "status": "ok | no_meter | no_screen| no_reading | low_confidence | invalid_reading | pipeline_error"
 }
 ```
 
 6. Status meanings
 - `ok` → everything detected successfully
 - `no_meter` → YOLO #1 failed
+- `no_screen` → YOLO #1 failed
 - `no_reading` → YOLO #2 failed
 - `low_confidence` → result is unreliable
+- `pipeline_error` → error in the pipeline
