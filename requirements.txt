@@ -21,3 +21,6 @@ Pillow==10.4.0
 sentencepiece==0.2.0
 jiwer==3.0.5
 tiktoken==0.8.0
+fastapi==0.139.0
+uvicorn[standard]==0.51.0
+python-multipart==0.0.32
