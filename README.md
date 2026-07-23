@@ -58,6 +58,12 @@ pre-commit run --all-files
 ```
 
 ## **8. Запуск пайплайна на одном фото**
+Перед запуском (модели грузятся локально, без обращения к HuggingFace):
+```
+export HF_HUB_OFFLINE=1
+export TRANSFORMERS_OFFLINE=1
+```
+
 ```
 python -m pipeline /<path>/<image-name>
 ```
@@ -71,24 +77,32 @@ confidence, статус. Визуализация сохраняется в `ou
 
 ## **9. Batch-оценка на тест-наборе**
 ```
-python -m src.utils.batch_eval --test-csv datasets/test_set.csv --enhancement clahe
+python -m src.utils.batch_eval --test-csv datasets/labels.csv
 ```
 Прогоняет весь тест-набор, выводит E2E-метрики: exact_matches, e2e_exact_match,
-mean_digit_accuracy и разбивку по статусам.
+mean_digit_accuracy, mean_cer и разбивку по статусам.
 
-Вы должны создать в корне папку `datasets`, внутри него еще папку `test`, потом туда положить фотографии. И `test_set.csv` файл с правильными значениями нужно положить в `datsets`.
+Вы должны создать в корне папку `data`, внутри него еще папку `e2e`, затем `images` и в конце туда положить фотографии. И `labels.csv` файл с правильными значениями нужно положить в `datsets`.
 ```
 ENERGY-METER-BOT-CV
 |--datasets/
-    |--tests/
-        |--фотографии
-    |--test_set.csv
+    |--labels.csv
+|--data/e2e/images
+    |--фотографии
 ```
 
 Флаг `--enhancement` принимает `none | clahe | zerodce` — используется для
 A/B-сравнения методов улучшения изображения.
 
+Флаг `--crop-mode` принимает `axis | warp` — используется для
+A/B-сравнения методов нарезания фотографий.
+
 Формат `--test-csv`: колонки `image_path,true_value`.
+
+Пример:
+```
+python -m src.utils.batch_eval --test-csv datasets/labels.csv --enhancement none --crop-mode warp
+```
 
 ## **10. Запуск: веб-сервис и UI**
 ```
@@ -105,6 +119,7 @@ uvicorn api:app --reload
     - GET /output — последняя картинка с разметкой
 
 Пример ответа(JSON) `/predict`:
+```
 {
   "meter_bbox": [...],
   "screen_bbox": [...],
@@ -114,6 +129,7 @@ uvicorn api:app --reload
   "confidence": 0.0,
   "status": "ok"
 }
+```
 
 ## **12. Docker**
 Собрать Docker image со всеми зависимостями, моделями и кодом:

@@ -83,31 +83,30 @@ def infer(
     )
 
 
-def ocr_infer(image: np.ndarray) -> OCRResult:
+def ocr_infer(image: np.ndarray, model_path: str = "models/trocr-meter-finetuned") -> OCRResult:
     if image is None:
         raise ValueError("ocr_infer received image=None")
 
     logger.info(f"TrOCR infer called, image shape: {image.shape}")
 
-    model_path = "models/trocr-meter-finetuned"
+    if not hasattr(ocr_infer, "_cache"):
+        ocr_infer._cache = {}
 
-    if not hasattr(ocr_infer, "processor"):
+    if model_path not in ocr_infer._cache:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         logger.info(f"Loading TrOCR model from: {model_path}")
         logger.info(f"Using device: {device}")
 
-        ocr_infer.processor = TrOCRProcessor.from_pretrained(model_path)
-        ocr_infer.model = VisionEncoderDecoderModel.from_pretrained(model_path)
+        processor = TrOCRProcessor.from_pretrained(model_path)
 
-        ocr_infer.model.to(device)
-        ocr_infer.model.eval()
+        model = VisionEncoderDecoderModel.from_pretrained(model_path)
+        model.to(device)
+        model.eval()
 
-        ocr_infer.device = device
+        ocr_infer._cache[model_path] = (processor, model, device)
 
-    processor = ocr_infer.processor
-    model = ocr_infer.model
-    device = ocr_infer.device
+    processor, model, device = ocr_infer._cache[model_path]
 
     if image.dtype != np.uint8:
         image = image.astype(np.uint8)

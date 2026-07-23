@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 
-from src.utils.contracts import Detection, PipelineResult
+from src.utils.contracts import Detection
 
 COLORS = {
     "meter": (0, 255, 0),  # green
@@ -47,13 +47,19 @@ def draw_detections(image: np.ndarray, detections: list[Detection]) -> np.ndarra
     return result
 
 
-def draw_pipeline_result(image: np.ndarray, result: PipelineResult) -> np.ndarray:
+def draw_pipeline_result(
+    image, result, meter_obb=None, screen_obb=None, reading_obb=None
+) -> np.ndarray:
     vis = image.copy()
 
     boxes = [
-        (result.meter_bbox, "meter", COLORS["meter"]),
-        (result.screen_bbox, result.screen_type, COLORS.get(result.screen_type, (255, 165, 0))),
-        (result.reading_bbox, "reading", COLORS["reading"]),
+        (meter_obb if meter_obb else result.meter_bbox, "meter", COLORS["meter"]),
+        (
+            screen_obb if screen_obb else result.screen_bbox,
+            result.screen_type,
+            COLORS.get(result.screen_type, (255, 165, 0)),
+        ),
+        (reading_obb if reading_obb else result.reading_bbox, "reading", COLORS["reading"]),
     ]
 
     for bbox, label, color in boxes:
