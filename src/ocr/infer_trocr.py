@@ -89,7 +89,7 @@ def ocr_infer(image: np.ndarray) -> OCRResult:
 
     logger.info(f"TrOCR infer called, image shape: {image.shape}")
 
-    model_path = "models/trocr-meter-finetuned"
+    model_path = "model_best/trocr-meter-finetuned"
 
     if not hasattr(ocr_infer, "processor"):
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -126,5 +126,5 @@ def ocr_infer(image: np.ndarray) -> OCRResult:
         processor=processor,
         model=model,
         device=device,
-        num_beams=4,
+        num_beams=2,
     )
