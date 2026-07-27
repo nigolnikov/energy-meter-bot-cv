@@ -1,7 +1,6 @@
 import argparse
 from pathlib import Path
 
-import jiwer
 import pandas as pd
 import torch
 from PIL import Image
@@ -10,6 +9,13 @@ from transformers import TrOCRProcessor, VisionEncoderDecoderModel
 from src.ocr.infer_trocr import infer
 from src.ocr.text import decode_label, is_valid_reading
 from src.utils.logger import logger
+from src.utils.metrics import (
+    character_error_rate,
+    classify_error,
+    digit_accuracy,
+    numeric_error,
+    word_error_rate,
+)
 
 MODEL_PATH = "models/trocr-meter-finetuned"
 
@@ -19,8 +25,8 @@ def load_model(
 ) -> tuple[TrOCRProcessor, VisionEncoderDecoderModel, torch.device]:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    processor = TrOCRProcessor.from_pretrained(model_name_or_path)
-    model = VisionEncoderDecoderModel.from_pretrained(model_name_or_path)
+    processor = TrOCRProcessor.from_pretrained(model_name_or_path, local_files_only=True)
+    model = VisionEncoderDecoderModel.from_pretrained(model_name_or_path, local_files_only=True)
 
     model.to(device)
     model.eval()
@@ -29,54 +35,6 @@ def load_model(
     logger.info(f"Loaded TrOCR model from: {model_name_or_path}")
 
     return processor, model, device
-
-
-def character_error_rate(true_text: str, predicted_text: str) -> float:
-    return jiwer.cer(true_text, predicted_text)
-
-
-def digit_accuracy(true_text: str, predicted_text: str) -> float:
-    max_len = max(len(true_text), len(predicted_text))
-
-    if max_len == 0:
-        return 1.0
-
-    correct = 0
-
-    for i in range(max_len):
-        true_char = true_text[i] if i < len(true_text) else None
-        predicted_char = predicted_text[i] if i < len(predicted_text) else None
-
-        if true_char == predicted_char:
-            correct += 1
-
-    return correct / max_len
-
-
-def numeric_error(true_text: str, predicted_text: str) -> float | None:
-    try:
-        true_number = float(true_text)
-        predicted_number = float(predicted_text)
-    except ValueError:
-        return None
-
-    return abs(true_number - predicted_number)
-
-
-def classify_error(true_text: str, predicted_text: str) -> str:
-    if true_text == predicted_text:
-        return "correct"
-
-    digits_match = true_text.replace(".", "") == predicted_text.replace(".", "")
-    dot_match = true_text.find(".") == predicted_text.find(".")
-
-    if digits_match and not dot_match:
-        return "dot_only"
-
-    if not digits_match and dot_match:
-        return "digits_only"
-
-    return "both"
 
 
 def parse_args() -> argparse.Namespace:
@@ -149,6 +107,7 @@ def main() -> None:
 
         exact_match = true_text == predicted_text
         cer = character_error_rate(true_text, predicted_text)
+        wer = word_error_rate(true_text, predicted_text)
         digit_acc = digit_accuracy(true_text, predicted_text)
         num_error = numeric_error(true_text, predicted_text)
         error_type = classify_error(true_text, predicted_text)
@@ -169,6 +128,7 @@ def main() -> None:
                 "confidence": result.confidence,
                 "exact_match": exact_match,
                 "cer": cer,
+                "wer": wer,
                 "digit_accuracy": digit_acc,
                 "numeric_error": num_error,
                 "error_type": error_type,
@@ -191,6 +151,7 @@ def main() -> None:
         "num_images": len(results_df),
         "exact_match_accuracy": results_df["exact_match"].mean(),
         "mean_cer": results_df["cer"].mean(),
+        "mean_wer": results_df["wer"].mean(),
         "mean_digit_accuracy": results_df["digit_accuracy"].mean(),
         # Digits right but dot misplaced, vs. dot right but digits misread.
         "digits_match_accuracy": results_df["digits_match"].mean(),

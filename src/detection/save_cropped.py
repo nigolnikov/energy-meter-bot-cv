@@ -5,10 +5,10 @@ import cv2
 from src.detection.obb_crop_robust import crop_and_warp_obb
 
 # PATHS
-dir_img = Path("datasets/yolo_meter_screen/images")
-dir_lab = Path("datasets/yolo_meter_screen/labels")
+dir_img = Path("datasets/all_cropped_total/images")
+dir_lab = Path("datasets/all_cropped_total/labels")
 
-dir_res = Path("datasets/yolo_res1_dig/images")
+dir_res = Path("datasets/cropped_yolo21/images")
 dir_res.mkdir(parents=True, exist_ok=True)
 
 CLASS_NAMES = {
@@ -16,7 +16,7 @@ CLASS_NAMES = {
     2: "analog_register",
 }
 
-for split in ["train", "val", "test"]:
+for split in ["train", "val"]:
     img_dir = dir_img / split
     lab_dir = dir_lab / split
 
@@ -51,7 +51,7 @@ for split in ["train", "val", "test"]:
 
             # meter ignored and analog register not considered here, only digital displays
 
-            if cls == 0:
+            if cls not in CLASS_NAMES:
                 continue
 
             coords = list(map(float, values[1:]))

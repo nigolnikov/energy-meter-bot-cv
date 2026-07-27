@@ -13,4 +13,8 @@ RUN pip install --no-cache-dir torch==2.5.1 --index-url https://download.pytorch
 COPY . .
 
 EXPOSE 8000
+
+ENV HF_HUB_OFFLINE=1
+ENV TRANSFORMERS_OFFLINE=1
+
 CMD ["uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8000"]

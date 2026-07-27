@@ -15,8 +15,8 @@ from transformers import (
     default_data_collator,
 )
 
-from src.ocr.augmentations_digital import build_train_augmentations
-from src.ocr.reporting import REPORT_DIRNAME, log_evaluation_report
+from src.ocr.augmentations_analog import build_train_augmentations
+from src.ocr.reporting import REPORT_DIRNAME, log_evaluation_report, plot_augmentation_samples
 from src.ocr.trocr_training import (
     PLOTS_DIRNAME,
     MeterOCRDataset,
@@ -30,7 +30,6 @@ from src.ocr.trocr_training import (
     log_numeric_metrics_to_mlflow,
     log_trainer_history_to_mlflow,
     mlflow_enabled,
-    save_final_metrics,
     save_loss_plot,
     save_metric_curves,
     save_run_inputs,
@@ -42,17 +41,22 @@ from src.utils.config import load_yaml_config
 
 DEFAULT_EPOCHS = 10
 DEFAULT_BATCH_SIZE = 4
-DEFAULT_LEARNING_RATE = 2e-5
+DEFAULT_LEARNING_RATE = 1e-5
 
 DEFAULT_MAX_TARGET_LENGTH = 13
 DEFAULT_WEIGHT_DECAY = 0.01
 DEFAULT_SEED = 42
 
+BEST_METRIC_BASE = "eval_exact_match_accuracy"
+BEST_METRIC_GREATER_IS_BETTER = True
+
 METRIC_CURVES = {
     "eval_mean_cer": ("Validation CER", "-"),
     "eval_exact_match_accuracy": ("Exact match", "-"),
-    "eval_digits_only_accuracy": ("Digits correct (ignoring dot)", "-"),
-    "eval_dot_position_accuracy": ("Dot position correct", "-"),
+    "eval_length_error_rate": ("Wrong length", "-"),
+    "eval_invalid_format_rate": ("Unparseable", "-"),
+    "eval_digits_only_accuracy": ("Digits correct", "--"),
+    "eval_dot_position_accuracy": ("Dot position correct", "--"),
 }
 
 
@@ -60,15 +64,26 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Fine-tune TrOCR model for meter OCR.")
     add_common_train_args(parser)
 
+    parser.add_argument(
+        "--no-augment",
+        action="store_true",
+        help="Disable train-time augmentation (debugging only).",
+    )
+
     return parser.parse_args()
 
 
 def apply_overrides(config: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
-    return apply_common_overrides(config, args)
+    config = apply_common_overrides(config, args)
+
+    if args.no_augment:
+        config["train"]["augment"] = False
+
+    return config
 
 
 def apply_default_train_values(config: dict[str, Any]) -> dict[str, Any]:
-    return apply_common_train_defaults(
+    config = apply_common_train_defaults(
         config,
         default_epochs=DEFAULT_EPOCHS,
         default_batch_size=DEFAULT_BATCH_SIZE,
@@ -77,10 +92,21 @@ def apply_default_train_values(config: dict[str, Any]) -> dict[str, Any]:
         default_weight_decay=DEFAULT_WEIGHT_DECAY,
         default_seed=DEFAULT_SEED,
     )
+    config["train"].setdefault("augment", True)
+
+    return config
+
+
+def best_metric_name(config: dict[str, Any]) -> str:
+    return BEST_METRIC_BASE
 
 
 def build_params(config: dict[str, Any]) -> dict[str, Any]:
-    return build_common_params(config)
+    params = build_common_params(config)
+    params["augment"] = config["train"]["augment"]
+    params["best_metric"] = best_metric_name(config)
+
+    return params
 
 
 def main() -> None:
@@ -121,7 +147,10 @@ def main() -> None:
             num_beams=train_cfg["num_beams"],
         )
 
-        train_augmentations = build_train_augmentations()
+        train_augmentations = build_train_augmentations() if train_cfg["augment"] else None
+
+        if train_augmentations is None:
+            print("WARNING: training WITHOUT augmentation.")
 
         train_dataset = MeterOCRDataset(
             images_dir=data_cfg["train_images"],
@@ -145,6 +174,12 @@ def main() -> None:
 
         check_label_encoding(processor, train_dataset)
 
+        if train_augmentations is not None:
+            plot_augmentation_samples(
+                train_dataset,
+                plots_dir / "augmentations.png",
+            )
+
         training_args = Seq2SeqTrainingArguments(
             output_dir=train_cfg["output_dir"],
             num_train_epochs=train_cfg["epochs"],
@@ -165,9 +200,14 @@ def main() -> None:
             fp16=torch.cuda.is_available(),
             remove_unused_columns=False,
             load_best_model_at_end=True,
-            metric_for_best_model="eval_exact_match_accuracy",
-            greater_is_better=True,
+            metric_for_best_model=best_metric_name(config),
+            greater_is_better=BEST_METRIC_GREATER_IS_BETTER,
             report_to="none",
+        )
+
+        print(
+            f"Selecting the best checkpoint on {best_metric_name(config)} "
+            f"(greater_is_better={BEST_METRIC_GREATER_IS_BETTER})."
         )
 
         trainer = Seq2SeqTrainer(
@@ -177,11 +217,15 @@ def main() -> None:
             eval_dataset=val_dataset,
             data_collator=default_data_collator,
             processing_class=processor,
-            compute_metrics=build_compute_metrics(processor),
+            compute_metrics=build_compute_metrics(processor, track_length=True),
         )
 
         train_result = trainer.train()
-        eval_metrics = trainer.evaluate()
+
+        val_metrics = trainer.evaluate(
+            eval_dataset=val_dataset,
+            metric_key_prefix="eval",
+        )
 
         trainer.save_model(output_dir)
         processor.save_pretrained(output_dir)
@@ -189,23 +233,27 @@ def main() -> None:
         save_trainer_history(trainer, plots_dir)
         save_loss_plot(trainer, plots_dir)
         save_metric_curves(trainer, plots_dir, METRIC_CURVES)
-        save_final_metrics(train_result.metrics, eval_metrics, plots_dir)
 
         log_evaluation_report(
             model=trainer.model,
             processor=processor,
             dataset=val_dataset,
-            output_dir=output_dir,
+            output_dir=output_dir / "val",
             batch_size=train_cfg["batch_size"],
         )
 
         if use_mlflow:
             log_numeric_metrics_to_mlflow(train_result.metrics)
-            log_numeric_metrics_to_mlflow(eval_metrics)
+
+            log_numeric_metrics_to_mlflow(val_metrics)
+
             log_trainer_history_to_mlflow(trainer)
 
             mlflow.log_artifacts(str(plots_dir), artifact_path=PLOTS_DIRNAME)
-            mlflow.log_artifacts(str(output_dir / REPORT_DIRNAME), artifact_path=REPORT_DIRNAME)
+            mlflow.log_artifacts(
+                str(output_dir / "val" / REPORT_DIRNAME),
+                artifact_path=f"{REPORT_DIRNAME}_val",
+            )
 
             if config["mlflow"].get("log_model"):
                 mlflow.log_artifacts(str(output_dir), artifact_path="model")
@@ -213,7 +261,8 @@ def main() -> None:
         print(f"Training finished. Model saved to: {output_dir}")
         print(f"Plots, params and metrics: {plots_dir}")
         print(f"Training metrics: {train_result.metrics}")
-        print(f"Validation metrics: {eval_metrics}")
+
+        print(f"Validation metrics: {val_metrics}")
 
         if use_mlflow:
             print(f"Logged to MLflow at: {config['mlflow']['tracking_uri']}")

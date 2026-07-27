@@ -3,14 +3,15 @@ from pathlib import Path
 
 import albumentations as A
 import cv2
-import jiwer
 import numpy as np
 import pandas as pd
 from PIL import Image
 
-from src.ocr.augmentations import DiagonalReflection, LCDGlare, LowContrastLCD, SealThreads
+from src.ocr.augmentations_digital import DiagonalReflection, LCDGlare, LowContrastLCD, SealThreads
 from src.ocr.infer_trocr import ocr_infer
 from src.ocr.text import decode_label, is_valid_reading
+from src.utils.metrics import character_error_rate, classify_error, numeric_error
+from src.utils.metrics import digit_accuracy as compute_digit_accuracy
 
 
 def normalize_text(text: str) -> str:
@@ -18,46 +19,6 @@ def normalize_text(text: str) -> str:
         return ""
 
     return decode_label(text)
-
-
-def compute_digit_accuracy(true_text: str, pred_text: str) -> float:
-    true_text = normalize_text(true_text)
-    pred_text = normalize_text(pred_text)
-
-    if len(true_text) == 0:
-        return 0.0
-
-    max_len = max(len(true_text), len(pred_text))
-
-    true_padded = true_text.ljust(max_len)
-    pred_padded = pred_text.ljust(max_len)
-
-    correct = sum(t == p for t, p in zip(true_padded, pred_padded, strict=False))
-
-    return correct / max_len
-
-
-def numeric_error(true_text: str, pred_text: str) -> float | None:
-    try:
-        return abs(float(true_text) - float(pred_text))
-    except ValueError:
-        return None
-
-
-def classify_error(true_text: str, pred_text: str) -> str:
-    if true_text == pred_text:
-        return "correct"
-
-    digits_match = true_text.replace(".", "") == pred_text.replace(".", "")
-    dot_match = true_text.find(".") == pred_text.find(".")
-
-    if digits_match and not dot_match:
-        return "dot_only"
-
-    if not digits_match and dot_match:
-        return "digits_only"
-
-    return "both"
 
 
 def build_robustness_transforms() -> dict[str, A.Compose | None]:
@@ -336,7 +297,7 @@ def evaluate_transform(
 
         is_exact = true_text == pred_text
 
-        cer = jiwer.cer(true_text, pred_text)
+        cer = character_error_rate(true_text, pred_text)
         digit_accuracy = compute_digit_accuracy(true_text, pred_text)
         num_error = numeric_error(true_text, pred_text)
         error_type = classify_error(true_text, pred_text)

@@ -18,7 +18,7 @@ CLASS_NAMES = {
 }
 
 # CHANGE THIS LATER: Role A должен будет указать путь к своей модели.
-MODEL_PATH = "runs/detect/runs/yolo/reading_area_yolo11s/weights/best.pt"
+MODEL_PATH = "runs/detect/runs/obb/runs/yolo_obb/reading_area_yolo11s_obb-14/weights/best.pt"
 
 model = YOLO(MODEL_PATH)
 
@@ -45,7 +45,7 @@ def infer(image: np.ndarray) -> list:
     results = model.predict(
         source=image,
         conf=0.25,
-        verbose=False,
+        verbose=True,
     )
 
     detections = []
@@ -61,7 +61,7 @@ def infer(image: np.ndarray) -> list:
         for bbox, cls_id, score in zip(boxes, classes, confidences, strict=False):
             detections.append(
                 Detection(
-                    bbox=bbox.reshape(-1).tolist(),
+                    bbox=bbox.toList(),
                     cls=CLASS_NAMES[int(cls_id)],
                     confidence=float(score),
                 )
