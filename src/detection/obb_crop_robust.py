@@ -1,3 +1,4 @@
+# obb crop robust
 """
 OBB → выровненный кроп для OCR (устойчивая версия, v7).
 
@@ -142,7 +143,6 @@ if __name__ == "__main__":
 
     model = YOLO("runs/obb/runs/yolo_obb/meter_screen_yolo11s_obb-32/weights/best.pt")
     img = cv2.imread("meter_photo.jpg")
-
     names = model.names  # {0: 'digital_display', ...}
 
     for result in model(img):

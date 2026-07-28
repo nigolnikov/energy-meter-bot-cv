@@ -61,7 +61,7 @@ def infer(image: np.ndarray) -> list:
         for bbox, cls_id, score in zip(boxes, classes, confidences, strict=False):
             detections.append(
                 Detection(
-                    bbox=bbox.toList(),
+                    bbox=bbox.tolist(),
                     cls=CLASS_NAMES[int(cls_id)],
                     confidence=float(score),
                 )
