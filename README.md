@@ -104,6 +104,7 @@ A/B-сравнения методов нарезания фотографий.
 python -m src.utils.batch_eval --test-csv datasets/labels.csv --enhancement none --crop-mode warp
 ```
 
+
 ## **10. Запуск: веб-сервис и UI**
 ```
 uvicorn api:app --reload

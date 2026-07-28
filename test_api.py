@@ -18,7 +18,7 @@ def test_root():
 
 
 def test_predict():
-    with open("datasets/test/photo_screen_1903.jpg", "rb") as f:
+    with open("data/e2e/all_images/photo_screen_45.jpg", "rb") as f:
         response = client.post(
             "/predict",
             files={"file": ("meter.jpg", f, "image/jpg")},

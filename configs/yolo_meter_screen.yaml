@@ -8,7 +8,7 @@ mlflow:
 train:
   task: obb
   model: yolo11s-obb.pt
-  data: datasets/yolo1 final train/data.yaml
+  data: datasets/yolo1_final_train/data.yaml
 
   epochs: 50
   imgsz: 640

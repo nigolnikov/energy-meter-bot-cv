@@ -26,3 +26,29 @@ def digit_accuracy(true_text: str, predicted_text: str) -> float:
             correct += 1
 
     return correct / max_len
+
+
+def numeric_error(true_text: str, predicted_text: str) -> float | None:
+    try:
+        true_number = float(true_text)
+        predicted_number = float(predicted_text)
+    except ValueError:
+        return None
+
+    return abs(true_number - predicted_number)
+
+
+def classify_error(true_text: str, predicted_text: str) -> str:
+    if true_text == predicted_text:
+        return "correct"
+
+    digits_match = true_text.replace(".", "") == predicted_text.replace(".", "")
+    dot_match = true_text.find(".") == predicted_text.find(".")
+
+    if digits_match and not dot_match:
+        return "dot_only"
+
+    if not digits_match and dot_match:
+        return "digits_only"
+
+    return "both"

@@ -1,4 +1,3 @@
-# save cropped
 from pathlib import Path
 
 import cv2
@@ -16,7 +15,6 @@ CLASS_NAMES = {
     1: "digital_display",
     2: "analog_register",
 }
-
 
 for split in ["train", "val"]:
     img_dir = dir_img / split
@@ -56,7 +54,6 @@ for split in ["train", "val"]:
             if cls not in CLASS_NAMES:
                 continue
 
-            # for obb
             coords = list(map(float, values[1:]))
 
             pixel_points = []

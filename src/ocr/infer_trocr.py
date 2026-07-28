@@ -125,5 +125,5 @@ def ocr_infer(image: np.ndarray, model_path: str = "models/trocr-meter-finetuned
         processor=processor,
         model=model,
         device=device,
-        num_beams=4,
+        num_beams=2,
     )

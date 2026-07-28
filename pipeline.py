@@ -182,6 +182,7 @@ def run_pipeline(
         confidence=round(final_confidence, 3),
         status=status,
     )
+
     vis = draw_pipeline_result(
         image,
         pipeline_result,
@@ -189,6 +190,7 @@ def run_pipeline(
         screen_obb=screen_det.bbox,  # 8 коорд OBB экрана
         reading_obb=reading_quad,  # 8 коорд повёрнутой рамки показания
     )
+
     save_visualization(vis, "output.jpg")
 
     return pipeline_result

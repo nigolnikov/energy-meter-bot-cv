@@ -1,0 +1,24 @@
+experiment:
+  name: trocr-analog
+  run_name: trocr-small-stage1-analog-e10-bs4-lr5e-5
+
+mlflow:
+  tracking_uri: ${MLFLOW_TRACKING_URI}
+
+model:
+  name: model_best/trocr-meter-finetuned
+
+data:
+  train_images: data/analog_imgs/images/train
+  train_labels: data/analog_imgs/labels/train.csv
+
+  val_images: data/analog_imgs/images/val
+  val_labels: data/analog_imgs/labels/val.csv
+
+
+  image_column: filename
+  text_column: text
+
+train:
+  output_dir: model_analog/trocr-meter-analog
+  augment: true
