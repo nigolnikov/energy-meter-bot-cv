@@ -21,9 +21,20 @@ class OCRResult:
 
 # Final Result
 class PipelineResult:
-    def __init__(self, meter_bbox, screen_bbox, reading_bbox, raw_text, value, confidence, status):
+    def __init__(
+        self,
+        meter_bbox,
+        screen_bbox,
+        screen_type,
+        reading_bbox,
+        raw_text,
+        value,
+        confidence,
+        status,
+    ):
         self.meter_bbox = meter_bbox
         self.screen_bbox = screen_bbox
+        self.screen_type = screen_type
         self.reading_bbox = reading_bbox
         self.raw_text = raw_text
         self.value = value
@@ -37,6 +48,7 @@ class PipelineResult:
         return {
             "meter_bbox": self.meter_bbox,
             "screen_bbox": self.screen_bbox,
+            "screen_type": self.screen_type,
             "reading_bbox": self.reading_bbox,
             "raw_text": self.raw_text,
             "value": self.value,

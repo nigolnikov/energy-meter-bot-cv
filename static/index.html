@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>O! Energy Meter Bot</title>
+  <style>
+    :root {
+      --pink: #ec0089;         /* фирменный акцент O! */
+      --pink-hover: #ff2ba6;
+      --bg: #0a0a0d;           /* почти чёрный фон */
+      --card: #141418;
+      --card-2: #1c1c22;
+      --border: #2a2a32;
+      --text: #f5f5f7;
+      --muted: #9a9aa5;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background:
+        radial-gradient(900px 500px at 80% -10%, rgba(236,0,137,.18), transparent 60%),
+        var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      padding: 48px 20px;
+    }
+    .container { width: 100%; max-width: 640px; }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 26px;
+    }
+    .logo {
+      width: 44px;
+      height: 44px;
+      border-radius: 10px;
+      display: block;
+    }
+    .brand-name { font-size: 18px; font-weight: 700; }
+    .brand-name span { color: var(--pink); }
+
+    h1 { font-size: 30px; line-height: 1.2; margin-bottom: 8px; letter-spacing: -.5px; }
+    .subtitle { color: var(--muted); margin-bottom: 30px; font-size: 15px; }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 26px;
+      margin-bottom: 20px;
+    }
+    .drop-label {
+      display: block;
+      border: 2px dashed #3a3a44;
+      border-radius: 14px;
+      padding: 34px;
+      text-align: center;
+      cursor: pointer;
+      color: var(--muted);
+      transition: border-color .2s, color .2s, background .2s;
+    }
+    .drop-label:hover { border-color: var(--pink); color: var(--text); background: rgba(236,0,137,.06); }
+    #fileInput { display: none; }
+
+    button {
+      width: 100%;
+      margin-top: 18px;
+      padding: 15px;
+      border: none;
+      border-radius: 13px;
+      background: var(--pink);
+      color: #fff;
+      font-size: 16px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: background .2s, transform .05s;
+    }
+    button:hover { background: var(--pink-hover); }
+    button:active { transform: scale(.99); }
+    button:disabled { background: #34343c; color: var(--muted); cursor: not-allowed; }
+
+    .secondary-btn {
+      background: transparent;
+      border: 1px solid var(--pink);
+      color: var(--pink);
+      margin-top: 16px;
+    }
+    .secondary-btn:hover { background: rgba(236,0,137,.08); }
+
+    .preview-img {
+      max-width: 100%;
+      border-radius: 14px;
+      margin-top: 18px;
+      display: block;
+    }
+
+    .value {
+      font-size: 52px;
+      font-weight: 800;
+      letter-spacing: 4px;
+      text-align: center;
+      font-variant-numeric: tabular-nums;
+      color: var(--pink);
+    }
+    .conf { text-align: center; color: var(--muted); margin-top: 4px; font-size: 14px; }
+    .status-wrap { text-align: center; }
+    .status {
+      display: inline-block;
+      margin-top: 16px;
+      padding: 5px 14px;
+      border-radius: 20px;
+      font-size: 13px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .5px;
+    }
+    .status-ok { background: rgba(34,197,94,.15); color: #4ade80; }
+    .status-low_confidence { background: rgba(234,179,8,.15); color: #fbbf24; }
+    .status-no_meter, .status-no_screen, .status-no_reading,
+    .status-invalid_reading { background: rgba(239,68,68,.15); color: #f87171; }
+
+    details { margin-top: 20px; }
+    summary { cursor: pointer; color: var(--muted); font-size: 14px; }
+    summary:hover { color: var(--text); }
+    pre {
+      background: var(--card-2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px;
+      margin-top: 12px;
+      overflow-x: auto;
+      font-size: 13px;
+      color: #cbd5e1;
+    }
+    .error { color: #f87171; text-align: center; }
+    .muted { color: var(--muted); text-align: center; }
+    footer { text-align: center; color: #55555f; font-size: 12px; margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="brand">
+      <img src="/static/logo.png" class="logo" alt="O!" />
+      <div class="brand-name">O! <span>· Energy Meter</span></div>
+    </div>
+
+    <h1>Распознавание показаний<br />электросчётчика</h1>
+    <p class="subtitle">Загрузите фотографию счётчика — модель определит показание автоматически</p>
+
+    <div class="card">
+      <label class="drop-label" for="fileInput" id="dropLabel">
+        Нажмите, чтобы выбрать фото счётчика
+      </label>
+      <input type="file" id="fileInput" accept="image/*" />
+      <div id="preview"></div>
+      <button id="submitBtn" disabled>Распознать</button>
+    </div>
+
+    <div class="card" id="resultCard" style="display:none;">
+      <div id="result"></div>
+    </div>
+
+    <footer>Powered by O! ML</footer>
+  </div>
+
+  <script>
+    const fileInput = document.getElementById("fileInput");
+    const dropLabel = document.getElementById("dropLabel");
+    const submitBtn = document.getElementById("submitBtn");
+    const previewDiv = document.getElementById("preview");
+    const resultCard = document.getElementById("resultCard");
+    const resultDiv = document.getElementById("result");
+
+    // 1. Превью выбранного фото
+    fileInput.addEventListener("change", () => {
+      const file = fileInput.files[0];
+      if (!file) return;
+      dropLabel.textContent = file.name;
+      previewDiv.innerHTML =
+        `<img src="${URL.createObjectURL(file)}" class="preview-img" alt="preview" />`;
+      submitBtn.disabled = false;
+    });
+
+    // 2. Отправка на /predict и отображение результата
+    submitBtn.addEventListener("click", async () => {
+      const file = fileInput.files[0];
+      if (!file) return;
+
+      submitBtn.disabled = true;
+      submitBtn.textContent = "Обработка…";
+      resultCard.style.display = "block";
+      resultDiv.innerHTML = '<p class="muted">Модель распознаёт показание…</p>';
+
+      const formData = new FormData();
+      formData.append("file", file);   // имя "file" = имя параметра в FastAPI
+
+      try {
+        const resp = await fetch("/predict", { method: "POST", body: formData });
+
+        if (!resp.ok) {
+          const err = await resp.json();
+          resultDiv.innerHTML = `<p class="error">Ошибка: ${err.detail || resp.status}</p>`;
+          return;
+        }
+
+        const data = await resp.json();
+        const conf = (data.confidence * 100).toFixed(1);
+        const hasPhoto =
+          data.status === "ok" || data.status === "low_confidence";
+        const annotated = hasPhoto
+          ? `<button type="button" id="showPhotoBtn" class="secondary-btn">Посмотреть фото с разметкой</button>
+             <div id="annotatedBox"></div>`
+          : "";
+        resultDiv.innerHTML = `
+          <div class="value">${data.value || "—"}</div>
+          <div class="conf">уверенность ${conf}%</div>
+          <div class="status-wrap">
+            <span class="status status-${data.status}">${data.status}</span>
+          </div>
+          ${annotated}
+          <details>
+            <summary>Полный JSON-ответ</summary>
+            <pre>${JSON.stringify(data, null, 2)}</pre>
+          </details>`;
+
+        const showPhotoBtn = document.getElementById("showPhotoBtn");
+        if (showPhotoBtn) {
+          const box = document.getElementById("annotatedBox");
+          showPhotoBtn.addEventListener("click", () => {
+            if (box.innerHTML === "") {
+              box.innerHTML =
+                `<img src="/output?t=${Date.now()}" class="preview-img" alt="detection" />`;
+              showPhotoBtn.textContent = "Скрыть фото";
+            } else {
+              box.innerHTML = "";
+              showPhotoBtn.textContent = "Посмотреть фото с разметкой";
+            }
+          });
+        }
+      } catch (e) {
+        resultDiv.innerHTML = `<p class="error">Не удалось связаться с сервером: ${e}</p>`;
+      } finally {
+        submitBtn.disabled = false;
+        submitBtn.textContent = "Распознать";
+      }
+    });
+  </script>
+</body>
+</html>

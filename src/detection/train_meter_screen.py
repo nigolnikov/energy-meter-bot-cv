@@ -1,3 +1,5 @@
+# TRAIN meter screen 100 lines
+
 import argparse
 import os
 from pathlib import Path
@@ -16,6 +18,7 @@ def parse_args() -> argparse.Namespace:
         "--config",
         type=str,
         required=True,
+        # change it
         help="Path to YAML config file.",
     )
 

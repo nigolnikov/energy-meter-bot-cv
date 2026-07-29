@@ -1,11 +1,12 @@
 import cv2
 import numpy as np
 
-from src.utils.contracts import Detection, PipelineResult
+from src.utils.contracts import Detection
 
 COLORS = {
     "meter": (0, 255, 0),  # green
-    "screen": (255, 165, 0),  # orange
+    "digital_display": (255, 165, 0),  # orange
+    "analog_register": (255, 165, 0),  # orange
     "reading": (0, 0, 255),  # red
 }
 
@@ -28,43 +29,57 @@ def draw_detections(image: np.ndarray, detections: list[Detection]) -> np.ndarra
     result = image.copy()
 
     for det in detections:
-        x1, y1, x2, y2 = det.bbox
         color = COLORS.get(det.cls, (255, 255, 255))
+        label = f"{det.cls}: {det.confidence:.2f}"
 
-        cv2.rectangle(result, (x1, y1), (x2, y2), color, thickness=2)
-
-        label = f"{det.cls}: {det.confidence:.3f}"
-        cv2.putText(
-            result,
-            label,
-            (x1, y1 - 10),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            fontScale=0.6,
-            color=color,
-            thickness=2,
-        )
+        if len(det.bbox) == 8:
+            # OBB - 8 координат (YOLO #1)
+            pts = np.array(det.bbox, dtype=np.float32).reshape(4, 2).astype(np.int32)
+            cv2.polylines(result, [pts], isClosed=True, color=color, thickness=2)
+            cv2.putText(
+                result, label, (pts[0][0], pts[0][1] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2
+            )
+        else:
+            # Обычный bbox — 4 координаты (YOLO #2)
+            x1, y1, x2, y2 = [int(v) for v in det.bbox]
+            cv2.rectangle(result, (x1, y1), (x2, y2), color, 2)
+            cv2.putText(result, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
     return result
 
 
-def draw_pipeline_result(image: np.ndarray, result: PipelineResult) -> np.ndarray:
+def draw_pipeline_result(
+    image, result, meter_obb=None, screen_obb=None, reading_obb=None
+) -> np.ndarray:
     vis = image.copy()
 
     boxes = [
-        (result.meter_box, "meter", COLORS["meter"]),
-        (result.screen_box, "screen", COLORS["screen"]),
-        (result.reading_box, "reading", COLORS["reading"]),
+        (meter_obb if meter_obb else result.meter_bbox, "meter", COLORS["meter"]),
+        (
+            screen_obb if screen_obb else result.screen_bbox,
+            result.screen_type,
+            COLORS.get(result.screen_type, (255, 165, 0)),
+        ),
+        (reading_obb if reading_obb else result.reading_bbox, "reading", COLORS["reading"]),
     ]
 
     for bbox, label, color in boxes:
-        if bbox:  # if box is not empty
-            x1, y1, x2, y2 = bbox
+        if not bbox:  # if box is not empty
+            continue
+        if len(bbox) == 8:
+            pts = np.array(bbox, dtype=np.float32).reshape(4, 2).astype(np.int32)
+            cv2.polylines(vis, [pts], isClosed=True, color=color, thickness=2)
+            cv2.putText(
+                vis, label, (pts[0][0], pts[0][1] - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2
+            )
+        else:
+            # Обычный bbox
+            x1, y1, x2, y2 = [int(v) for v in bbox]
             cv2.rectangle(vis, (x1, y1), (x2, y2), color, 2)
             cv2.putText(vis, label, (x1, y1 - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
 
-    status_text = f"Value: {result.value} ({result.status})"
     cv2.putText(
         vis,
-        status_text,
+        f"Value: {result.value} ({result.status})",
         (10, image.shape[0] - 10),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.8,

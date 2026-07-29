@@ -3,76 +3,39 @@ import os
 import cv2
 import numpy as np
 import torch
-import torch.nn as nn
 
+from src.detection.infer_meter_screen import infer as yolo1_infer
 from src.utils.logger import logger
-
-
-class enhance_net_nopool(nn.Module):
-    """
-    ЗАГЛУШКА Zero-DCE++ сети — Role C заменит на реальную архитектуру.
-
-    Используется в: src/utils/preprocessing.py → ZeroDCEEnhancer.__init__()
-
-    Контракт forward():
-        Вход:  torch.Tensor shape (1, 3, H, W), float32, значения [0.0 .. 1.0]
-        Выход: list где [0] — torch.Tensor той же формы (1, 3, H, W)
-
-    Сейчас: возвращает вход без изменений (identity).
-    Картинка не улучшается, но ZeroDCEEnhancer не падает с ошибкой.
-    """
-
-    def __init__(self, scale_factor: int = 1):
-        super().__init__()
-        # TODO Role C: здесь будут сверточные слои DCE-Net
-
-    def forward(self, x: torch.Tensor) -> list:
-        # TODO Role C: заменить на реальный проход через сеть
-        return [x]
+from src.utils.zero_dce_model import enhance_net_nopool
 
 
 class ObjectDetector:
-    """
-    ЗАГЛУШКА детектора — Role C заменит на реальный YOLO детектор.
-
-    Используется в: src/utils/preprocessing.py → PhotoMan(ObjectDetector)
-    PhotoMan наследуется от этого класса и вызывает get_masked_screen().
-
-    Контракт get_masked_screen():
-        Вход:  нет (берёт self.source установленный в __init__)
-        Выход: dict:
-            {
-                "bool": True,        # True если экран найден
-                "img": np.ndarray    # crop экрана BGR shape (H, W, 3)
-            }
-            или
-            {
-                "bool": False,       # экран не найден
-                "img": None
-            }
-
-    Сейчас: возвращает {"bool": False} — PhotoMan бросит ValueError.
-    Role C заменит на реальный YOLO #1 инференс + crop экрана.
-    """
-
     def __init__(self, source=None):
-        """
-        source — путь к фото (str) или np.ndarray изображение.
-        Role A будет загружать YOLO модель и запускать инференс по source.
-        """
-        self.sourse = source
-        logger.info(f"[STUB] ObjectDetector initialized, source={source}")
+        self.source = source
+        logger.info(f"ObjectDetector initialized, source={source}")
 
     def get_masked_screen(self) -> dict:
-        """
-        ЗАГЛУШКА. Role A заменит на реальную детекцию + crop экрана.
+        if isinstance(self.source, str):
+            image = cv2.imread(self.source)
+            if image is None:
+                logger.error(f"Cannot open image: {self.source}")
+                return {"bool": False, "img": None}
+        else:
+            image = self.source
 
-        Возвращает:
-            "bool" — найден ли экран на фото
-            "img"  — np.ndarray crop экрана в BGR (H, W, 3)
-        """
-        logger.warning("[STUB] get_masked_screen called — returning empty result")
-        return {"bool": False, "img": None}
+        # Запускаем YOLO #1
+        detections = yolo1_infer(image)
+
+        # Ищем digital display среди детекций
+        screen_det = next((d for d in detections if d.cls == "digital_display"), None)
+
+        if screen_det is None:
+            logger.warning("digital_display not found")
+            return {"bool": False, "img": None}
+
+        crop = crop_obb(image, screen_det.bbox)
+        logger.info(f"Screen crop: {crop.shape[1]}x{crop.shape[0]}")
+        return {"bool": True, "img": crop}
 
 
 class ZeroDCEEnhancer:
@@ -83,7 +46,7 @@ class ZeroDCEEnhancer:
 
         logger.info(f"Loading Zero-DCE++ weights from {weights_path}")
         self.model = enhance_net_nopool(scale_factor=1)  # <-- вот это
-        self.model.load_state_dict(torch.load(weights_path, map_location="cpu"))
+        self.model.load_state_dict(torch.load(weights_path, map_location="cpu", weights_only=True))
         self.model.eval()
         logger.info("Zero-DCE++ model loaded successfully")
 
@@ -217,7 +180,7 @@ def preprocess_for_ocr(image_bgr: np.ndarray) -> np.ndarray:
     enhanced = apply_clahe(image_bgr)
     denoised = denoise(enhanced)
     sharpened = sharpen(denoised)
-    logger.info("preprocess_for_ocr complete")
+    logger.info("Preprocess for OCR complete!")
     return sharpened
 
 
@@ -234,7 +197,7 @@ def crop_bbox(image: np.ndarray, bbox: list) -> np.ndarray:
     Выход: np.ndarray (h, w, 3) — вырезанная область
     """
     x1, y1, x2, y2 = bbox
-    crop = image[y1:y2, x1:x2]
+    crop = image[int(y1) : int(y2), int(x1) : int(x2)]
     logger.info(f"Cropped: {crop.shape[1]}x{crop.shape[0]}")
     return crop
 
@@ -253,3 +216,41 @@ def crop_obb(image: np.ndarray, bbox: list) -> np.ndarray:
     crop = image[y1:y2, x1:x2]
     logger.info(f"OBB crop: {crop.shape[1]}x{crop.shape[0]}")
     return crop
+
+
+# Смотрим отдельно на вырезанный crop
+def reading_to_original(reading_bbox: list, screen_bbox: list) -> list:
+    off_x, off_y = screen_bbox[0], screen_bbox[1]
+    rx1, ry1, rx2, ry2 = reading_bbox
+    return [int(rx1 + off_x), int(ry1 + off_y), int(rx2 + off_x), int(ry2 + off_y)]
+
+
+def obb_to_bbox(bbox: list) -> list:
+    xs = bbox[0::2]
+    ys = bbox[1::2]
+    return [int(min(xs)), int(min(ys)), int(max(xs)), int(max(ys))]
+
+
+def validate_reading(text: str) -> bool:
+    text = text.strip()
+
+    if not (4 <= len(text) <= 10):
+        return False
+
+    if text.count(".") > 1:
+        return False
+
+    if text.startswith(".") or text.endswith("."):
+        return False
+
+    return all(ch.isdigit() or ch == "." for ch in text)
+
+
+def apply_enhancement(image_bgr: np.ndarray, method: str) -> np.ndarray:
+    if method == "none":
+        return image_bgr
+    if method == "clahe":
+        return apply_clahe(image_bgr)
+    if method == "zerodce":
+        return ZeroDCEEnhancer().enhance(image_bgr)
+    raise ValueError(f"Unknown Enhancement method: {method}")

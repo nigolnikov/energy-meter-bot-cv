@@ -1,35 +1,129 @@
-# TrOCR — распознавание цифр показания счётчика.
-# Владелец: Role B.
-#
-# Когда Role B напишет реальный код — заменить тело infer(),
-# интерфейс (входы/выходы) менять НЕ нужно.
-
 import numpy as np
+import torch
+from PIL import Image
+from transformers import TrOCRProcessor, VisionEncoderDecoderModel
 
 from src.utils.contracts import OCRResult
 from src.utils.logger import logger
 
 
-def infer(image: np.ndarray) -> OCRResult:
-    """
-    ЗАГЛУШКА TrOCR — Role B заменит на реальный инференс.
+def infer(
+    image: Image.Image,
+    processor: TrOCRProcessor,
+    model: VisionEncoderDecoderModel,
+    device: torch.device,
+    num_beams: int = 4,
+) -> OCRResult:
+    image = image.convert("RGB")
 
-    Используется в: pipeline.py → run_pipeline()
+    pixel_values = processor(
+        images=image,
+        return_tensors="pt",
+    ).pixel_values.to(device)
 
-    Контракт:
-        Вход:  np.ndarray (H, W) или (H, W, 3) — crop области показания
-               после preprocessing (CLAHE + sharpen + denoise)
-        Выход: OCRResult:
-            text       (str)   — сырой текст как увидела модель, например "0012 3"
-                                 НЕ чистить пробелы и мусор здесь —
-                                 post-processing делается в pipeline.py
-            confidence (float) — уверенность модели [0.0 .. 1.0]
+    with torch.no_grad():
+        output = model.generate(
+            pixel_values,
+            num_beams=num_beams,
+            early_stopping=True,
+            output_scores=True,
+            return_dict_in_generate=True,
+        )
 
-    Сейчас: возвращает фейковый текст "00123" с confidence 0.88.
-    Pipeline проходит до конца без ошибок.
-    """
+    predicted_text = processor.batch_decode(
+        output.sequences,
+        skip_special_tokens=True,
+    )[0].strip()
 
-    logger.info(f"[STUB] TrOCR infer called, image shape: {image.shape}")
+    transition_scores_kwargs = {
+        "normalize_logits": True,
+    }
 
-    # TODO Role B: загрузить TrOCR модель, распознать текст, вернуть OCRResult
-    return OCRResult(text="00123", confidence=0.88)
+    if num_beams > 1:
+        transition_scores_kwargs["beam_indices"] = output.beam_indices
+
+    transition_scores = model.compute_transition_scores(
+        output.sequences,
+        output.scores,
+        **transition_scores_kwargs,
+    )[0]
+
+    generated_token_ids = output.sequences[0, 1:]
+
+    eos_token_id = model.generation_config.eos_token_id
+    if isinstance(eos_token_id, list | tuple):
+        eos_token_id = eos_token_id[0]
+
+    eos_positions = (generated_token_ids == eos_token_id).nonzero()
+
+    if len(eos_positions) > 0:
+        valid_length = int(eos_positions[0]) + 1
+    else:
+        valid_length = generated_token_ids.shape[0]
+
+    valid_log_probs = transition_scores[:valid_length]
+    valid_probs = valid_log_probs.exp()
+
+    if valid_length == 0:
+        confidence = 0.0
+    else:
+        confidence = float(valid_log_probs.mean().exp())
+
+    min_confidence = float(valid_probs.min()) if valid_length > 0 else 0.0
+
+    logger.info(
+        f"TrOCR prediction: {predicted_text!r}, "
+        f"confidence={confidence:.4f}, "
+        f"min_confidence={min_confidence:.4f}"
+    )
+
+    return OCRResult(
+        text=predicted_text,
+        confidence=confidence,
+    )
+
+
+def ocr_infer(image: np.ndarray, model_path: str = "models/trocr-meter-finetuned") -> OCRResult:
+    if image is None:
+        raise ValueError("ocr_infer received image=None")
+
+    logger.info(f"TrOCR infer called, image shape: {image.shape}")
+
+    if not hasattr(ocr_infer, "_cache"):
+        ocr_infer._cache = {}
+
+    if model_path not in ocr_infer._cache:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        logger.info(f"Loading TrOCR model from: {model_path}")
+        logger.info(f"Using device: {device}")
+
+        processor = TrOCRProcessor.from_pretrained(model_path)
+
+        model = VisionEncoderDecoderModel.from_pretrained(model_path)
+        model.to(device)
+        model.eval()
+
+        ocr_infer._cache[model_path] = (processor, model, device)
+
+    processor, model, device = ocr_infer._cache[model_path]
+
+    if image.dtype != np.uint8:
+        image = image.astype(np.uint8)
+
+    if len(image.shape) == 2:
+        pil_image = Image.fromarray(image).convert("RGB")
+
+    elif len(image.shape) == 3 and image.shape[2] in [3, 4]:
+        pil_image = Image.fromarray(image).convert("RGB")
+
+    else:
+        raise ValueError(f"Unsupported image shape for OCR: {image.shape}")
+
+    return infer(
+        image=pil_image,
+        processor=processor,
+        model=model,
+        device=device,
+        num_beams=2,
+    )
